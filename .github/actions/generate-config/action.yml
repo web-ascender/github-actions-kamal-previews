@@ -124,12 +124,11 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Set up Ruby (no Bundler needed; stdlib only)
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: "3.3"
-        bundler-cache: false
-
+    # Ruby is set up by the parent kamal-previews action's setup step;
+    # this sub-action just invokes the stdlib-only CLI on whatever Ruby
+    # is already on PATH. Avoids clobbering the consumer's chosen
+    # ruby-version (which can break later steps that shell out to
+    # `bin/rails` from the consumer's Gemfile-pinned Ruby).
     - id: run
       shell: bash
       env:
@@ -212,17 +211,19 @@ runs:
         summary="$("${cmd[@]}")"
         printf '%s\n' "$summary"
 
-        # Export resolved per-DB env vars to $GITHUB_ENV so later steps
-        # (kamal deploy → kamal secrets) can read $DATABASE_NAME etc. when
-        # building URLs in their own .kamal/secrets.<dest> file. Also re-
-        # exports static fields like SLUG / DB_SLUG / DESTINATION for the
-        # same reason.
+        # Export resolved per-DB *_NAME env vars to $GITHUB_ENV so later
+        # steps (kamal deploy → kamal secrets) can read $DATABASE_NAME etc.
+        # when building URLs in their own .kamal/secrets.<dest> file.
+        # *_URL entries are SKIPPED here — they get the rewritten URL
+        # injected later by the action's db_admin_url step, and exposing
+        # the bare target name as $DATABASE_URL would clobber the URL the
+        # consumer's secrets file produces.
         databases_resolved="$(printf '%s' "$summary" | ruby -rjson -e 'puts JSON.parse(STDIN.read)["databases_resolved"].to_s')"
         if [ -n "$databases_resolved" ]; then
           while IFS= read -r entry; do
             [ -z "$entry" ] && continue
-            # Format: ENV_NAME=source:target — strip source: from the value.
             name="${entry%%=*}"
+            case "$name" in *_URL|*_url) continue ;; esac
             rest="${entry#*=}"
             target="${rest#*:}"
             printf '%s=%s\n' "$name" "$target" >> "$GITHUB_ENV"
