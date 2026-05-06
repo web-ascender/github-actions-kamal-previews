@@ -1,5 +1,31 @@
 # Troubleshooting
 
+## Kamal pre-build / pre-deploy hooks reject preview deployments
+
+If your repo has a `.kamal/hooks/pre-build` or `pre-deploy` script that
+gates on the branch-vs-destination combination (e.g. only `master` →
+`production` and `rails8` → `staging`), it will reject every preview
+because preview destinations don't appear in that allowlist.
+
+Two clean fixes — pick whichever you prefer:
+
+**1. Detect previews by destination prefix.** Set
+`destination-pattern: preview-{slug}` on the action, then teach the
+hook to bypass its branch check for any preview destination:
+
+```ruby
+# .kamal/hooks/pre-build
+exit(true) if ENV["KAMAL_DESTINATION"]&.start_with?("preview-")
+# …existing branch / destination assertions below…
+```
+
+**2. Detect previews by `FEATURE_BRANCH=true` env var.** kamal-previews
+sets this in `env.clear` of every per-PR config. Useful in `pre-deploy`
+hooks where the env is already loaded.
+
+The action exposes `KAMAL_DESTINATION` to hooks like every Kamal
+deploy does, so option (1) requires no extra plumbing.
+
 ## "host is used by another service" (kamal-proxy)
 
 `kamal-proxy` enforces uniqueness on `proxy.host:` across all apps on a

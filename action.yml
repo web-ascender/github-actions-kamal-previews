@@ -48,11 +48,19 @@ description: |
   as a sibling step. Tunnels established in earlier steps remain active for
   the subsequent `kamal-previews` step in the same job.
 
-  For multi-job concurrency control, branch-pattern filtering, or the
-  max-active-previews cap, prefer the reusable workflow at
-  `web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1` (which
-  does have integrated VPN inputs because reusable workflows can't compose
-  with sibling steps the way actions can).
+  Two consumption forms; pick whichever fits:
+
+  - **This composite action** — single-step, sibling-friendly. Use when
+    your job needs a sibling VPN tunnel, custom credential-fetch step,
+    or any other pre/post step around kamal-previews itself.
+  - **Reusable workflow** at
+    `web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1` —
+    multi-job, with deploy and teardown as separate jobs. Use when you
+    don't need sibling steps and want stricter concurrency control.
+
+  Both forms support `branch-pattern` and `max-active-previews`. Neither
+  ships with VPN inputs; add the VPN as a sibling step (composite) or a
+  pre-step in your wrapping workflow (reusable).
 
 inputs:
   base-deploy-file:           { required: true }
