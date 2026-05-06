@@ -41,6 +41,30 @@ jobs:
         with:
           args: -color
 
+  manifest-template-check:
+    name: Reject \${{ secrets.* }} in action manifests
+    # GitHub's action manifest loader parses every field for `${{ ... }}`
+    # template expressions and rejects any whose context (e.g. `secrets`)
+    # isn't available at action-load time — including occurrences inside
+    # `description:` docstrings. The `$${{` escape doesn't apply here.
+    # Reject any such occurrence in action.yml files.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          violators=$(grep -rln '\${{' action.yml sweep/action.yml .github/actions/*/action.yml 2>/dev/null | xargs -I{} grep -l 'secrets\.' {} 2>/dev/null || true)
+          # Filter to files that actually have `${{ secrets.X }}` (full match)
+          fail=0
+          for f in action.yml sweep/action.yml $(ls .github/actions/*/action.yml 2>/dev/null); do
+            [ -f "$f" ] || continue
+            if grep -nE '\$\{\{[^}]*secrets\.' "$f"; then
+              echo "::error file=$f::action manifests cannot reference secrets.* in any field — even in description docstrings, GitHub's loader will reject it."
+              fail=1
+            fi
+          done
+          exit $fail
+
   yaml-parse:
     name: Strict YAML parse
     # Catches "mapping values are not allowed in this context" errors that
