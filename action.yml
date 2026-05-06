@@ -32,10 +32,11 @@ description: |
                 databases: |
                   DATABASE_URL=myapp_staging:myapp_{db_slug}
               env:
-                SSH_PRIVATE_KEY:  $${{ secrets.DEPLOY_SSH_KEY }}
+                # Forwarded from `secrets.*` in the calling workflow:
+                SSH_PRIVATE_KEY:  <your DEPLOY_SSH_KEY secret>
                 # Required only if the secrets file shells out to
-                # `bin/rails credentials:fetch` to populate DATABASE_URL.
-                RAILS_MASTER_KEY: $${{ secrets.STAGING_MASTER_KEY }}
+                # `bin/rails credentials:fetch` to populate DATABASE_URL:
+                RAILS_MASTER_KEY: <your STAGING_MASTER_KEY secret>
 
   Internally dispatches based on the triggering event:
     - pull_request opened/synchronize/reopened   → deploy
