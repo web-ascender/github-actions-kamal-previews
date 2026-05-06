@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "date" # for Date / DateTime in YAML permitted_classes
 require "fileutils"
 require "yaml"
 
