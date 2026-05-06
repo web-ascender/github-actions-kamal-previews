@@ -129,9 +129,9 @@ inputs:
   ruby-version:               { required: false, default: "3.3" }
   kamal-version:              { required: false, default: "" }
   bundler-cache:
-    description: When `true`, runs `bundle install` (with caching) during setup. Needed if your `base-secrets-file` shells out to `bin/rails credentials:fetch` (or any other `bundle exec`) at deploy time. Default `false`.
+    description: Runs `bundle install` (with caching) during setup. Default `true` because the dominant Rails-secrets pattern (`bin/rails credentials:fetch`) needs it. Set to `false` only if you have no Gemfile.lock or your secrets pipeline is bundle-free.
     required: false
-    default: "false"
+    default: "true"
   ssh-user:                   { required: false, default: deploy }
   ssh-port:                   { required: false, default: "22" }
 

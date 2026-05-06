@@ -18,13 +18,15 @@ inputs:
     required: true
   bundler-cache:
     description: |
-      When `true`, run `bundle install` (with caching) on the runner.
-      Needed when your `base-secrets-file` shells out to `bin/rails
+      When `true` (default), run `bundle install` (with caching) on the
+      runner. Needed when your `base-secrets-file` shells out to `bin/rails
       credentials:fetch` (or any other `bundle exec` command) — Kamal
       evaluates the secrets file on the runner before deploying, so the
-      runner needs the gem set installed. Default `false`.
+      runner needs the gem set installed. Set to `false` only if you have
+      no Gemfile.lock or your secrets pipeline is bundle-free (e.g. pure
+      `kamal secrets fetch --adapter ...`).
     required: false
-    default: "false"
+    default: "true"
   setup-buildx:
     description: Whether to install Docker Buildx (needed for `kamal build`).
     required: false

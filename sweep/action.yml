@@ -57,7 +57,7 @@ inputs:
   prefix-strip:               { required: false, default: "feature/,feat/,fix/,bug/,bugfix/,chore/,hotfix/,release/" }
   ruby-version:               { required: false, default: "3.3" }
   kamal-version:              { required: false, default: "" }
-  bundler-cache:              { required: false, default: "false" }
+  bundler-cache:              { required: false, default: "true" }
   ssh-user:                   { required: false, default: deploy }
   ssh-port:                   { required: false, default: "22" }
   environment-prefix:         { required: false, default: "preview-" }

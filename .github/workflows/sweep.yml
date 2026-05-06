@@ -52,9 +52,9 @@ on:
       ruby-version:            { type: string, default: "3.3" }
       kamal-version:           { type: string, default: "" }
       bundler-cache:
-        description: Run `bundle install` (with caching) on the runner. Needed when `base-secrets-file` shells out to `bin/rails credentials:fetch`.
+        description: Run `bundle install` (with caching) on the runner. Default `true` because the dominant Rails-secrets pattern (`bin/rails credentials:fetch` in the secrets file) needs it. Set to `false` only if your secrets pipeline is bundle-free.
         type: string
-        default: "false"
+        default: "true"
       ssh-user:                { type: string, default: deploy }
       ssh-port:                { type: string, default: "22" }
       environment-prefix:
