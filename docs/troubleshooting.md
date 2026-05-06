@@ -7,12 +7,12 @@ host. If you see this on first deploy, the most common cause is your
 `base-deploy-file` declaring `proxy.host: staging.example.com` while the
 existing staging app already owns that hostname.
 
-This shouldn't happen in normal operation: feature-deploys overrides
+This shouldn't happen in normal operation: kamal-previews overrides
 `proxy.host` in every per-PR file. But if `domain-label-pattern` resolves
 to the same hostname twice (e.g., the staging label collides with a slug),
 you'll see this error.
 
-Run `bin/feature-deploys slugify --branch <name>` to preview the slug for
+Run `bin/kamal-previews slugify --branch <name>` to preview the slug for
 a branch and confirm there's no overlap.
 
 ## "FATAL: source database is being accessed by other users"
@@ -77,12 +77,12 @@ permissions:
 
 If you're calling the reusable workflow from a fork-originated PR, GitHub
 restricts the `secrets:` and `permissions:` available — that's a GitHub
-security feature, not a feature-deploys bug.
+security feature, not a kamal-previews bug.
 
 ## The PR comment is duplicated, not updated
 
 The `pr-comment` action identifies its previous comment by an HTML
-marker (`<!-- feature-deploys:status -->`). If the comment was edited by
+marker (`<!-- kamal-previews:status -->`). If the comment was edited by
 hand and the marker stripped, the action will create a new one on the
 next run. Either restore the marker or accept the duplicate.
 
@@ -130,9 +130,9 @@ need tuning — file an issue with your pattern and we'll add a knob.
 
 ## Where to file bugs
 
-Open an issue at https://github.com/web-ascender/feature-deploys/issues
+Open an issue at https://github.com/web-ascender/github-actions-kamal-previews/issues
 with:
 
 - The minimal example workflow file you're using (with secrets stripped).
 - A link to a failing run (or copy of the relevant log lines).
-- The output of `kamal version` and `bin/feature-deploys version`.
+- The output of `kamal version` and `bin/kamal-previews version`.

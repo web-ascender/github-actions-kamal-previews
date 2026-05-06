@@ -19,7 +19,7 @@ remove_db() {
   local base="$1"
   for suffix in "" "-wal" "-shm"; do
     if [ -e "${base}${suffix}" ]; then
-      echo "[feature-deploys] Removing ${base}${suffix}"
+      echo "[kamal-previews] Removing ${base}${suffix}"
       rm -f "${base}${suffix}"
     fi
   done
@@ -34,4 +34,4 @@ if [ -n "$ALSO_DROP" ]; then
   done
 fi
 
-echo "[feature-deploys] Drop complete."
+echo "[kamal-previews] Drop complete."

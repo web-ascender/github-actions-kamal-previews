@@ -1,4 +1,4 @@
-# feature-deploys / orphan sweep
+# kamal-previews / orphan sweep
 #
 # Reconciles the set of registered "preview" GitHub Deployments against the
 # set of currently-open pull requests, and tears down anything that's been
@@ -30,7 +30,7 @@
 #         environment-prefix: preview-
 #       secrets: inherit
 
-name: feature-deploys / sweep
+name: kamal-previews / sweep
 
 on:
   workflow_call:
@@ -125,7 +125,7 @@ jobs:
             # same slug rule. We re-derive each open branch's slug locally.
             matched=0
             for branch in "${open_branches[@]}"; do
-              # Quick approximation of feature-deploys' slug rule: lowercase,
+              # Quick approximation of kamal-previews' slug rule: lowercase,
               # non-alnum → '-', collapse '-', strip leading prefix segments.
               candidate="$(echo "$branch" | tr '[:upper:]' '[:lower:]' | sed -E 's|^(feature|feat|fix|bug|bugfix|chore|hotfix|release)/||' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
               if [ "$candidate" = "$slug" ]; then matched=1; break; fi
@@ -164,7 +164,7 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - id: fd_ref
+      - id: kp_ref
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
@@ -176,11 +176,11 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          repository: ${{ steps.fd_ref.outputs.repo }}
-          ref: ${{ steps.fd_ref.outputs.ref }}
-          path: .feature-deploys
+          repository: ${{ steps.kp_ref.outputs.repo }}
+          ref: ${{ steps.kp_ref.outputs.ref }}
+          path: .kamal-previews
 
-      - uses: ./.feature-deploys/.github/actions/setup
+      - uses: ./.kamal-previews/.github/actions/setup
         with:
           ruby-version: ${{ inputs.ruby-version }}
           kamal-version: ${{ inputs.kamal-version }}
@@ -194,7 +194,7 @@ jobs:
       # slug as the branch name to generate-config — yes, that's a tiny abuse
       # but it produces the right artifacts.
       - id: config
-        uses: ./.feature-deploys/.github/actions/generate-config
+        uses: ./.kamal-previews/.github/actions/generate-config
         with:
           branch-name: ${{ matrix.slug }}
           base-deploy-file: ${{ inputs.base-deploy-file }}
@@ -221,12 +221,12 @@ jobs:
           resolved="${resolved//\{db_slug\}/$DB_SLUG}"
           echo "path=$resolved" >> "$GITHUB_OUTPUT"
 
-      - uses: ./.feature-deploys/.github/actions/teardown
+      - uses: ./.kamal-previews/.github/actions/teardown
         with:
           destination: ${{ steps.config.outputs.destination }}
 
       - if: inputs.database-engine != 'none'
-        uses: ./.feature-deploys/.github/actions/drop-database
+        uses: ./.kamal-previews/.github/actions/drop-database
         with:
           engine: ${{ inputs.database-engine }}
           host: ${{ inputs.deploy-host }}
@@ -247,7 +247,7 @@ jobs:
           sqlite-also-drop: ${{ inputs.sqlite-also-clone }}
 
       - if: always()
-        uses: ./.feature-deploys/.github/actions/deployment-status
+        uses: ./.kamal-previews/.github/actions/deployment-status
         with:
           state: removed
           environment-name: preview-${{ steps.config.outputs.slug }}

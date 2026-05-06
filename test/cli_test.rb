@@ -6,12 +6,12 @@ require "open3"
 class CLITest < Minitest::Test
   include TestHelpers
 
-  CLI_BIN = File.expand_path("../bin/feature-deploys", __dir__)
+  CLI_BIN = File.expand_path("../bin/kamal-previews", __dir__)
 
   def test_version
     out, _err, status = Open3.capture3(CLI_BIN, "version")
     assert status.success?
-    assert_equal FeatureDeploys::VERSION, out.strip
+    assert_equal KamalPreviews::VERSION, out.strip
   end
 
   def test_help_when_no_args

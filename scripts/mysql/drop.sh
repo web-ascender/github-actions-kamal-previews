@@ -21,11 +21,11 @@ source "${SCRIPT_DIR}/../lib/identifier-safe.sh"
 : "${TARGET_DATABASE:?TARGET_DATABASE is required}"
 
 MYSQL_PORT="${MYSQL_PORT:-3306}"
-fd_assert_identifier "$TARGET_DATABASE" "TARGET_DATABASE"
+kp_assert_identifier "$TARGET_DATABASE" "TARGET_DATABASE"
 
 mysql_args=(-h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD")
 [ -n "${MYSQL_SSL_MODE:-}" ] && mysql_args+=(--ssl-mode="$MYSQL_SSL_MODE")
 
-fd_log "Dropping database '${TARGET_DATABASE}' (if it exists)…"
+kp_log "Dropping database '${TARGET_DATABASE}' (if it exists)…"
 mysql "${mysql_args[@]}" -e "DROP DATABASE IF EXISTS \`${TARGET_DATABASE}\`;"
-fd_log "Drop complete."
+kp_log "Drop complete."

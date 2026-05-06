@@ -6,12 +6,12 @@ require "tmpdir"
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
-require "feature_deploys"
+require "kamal_previews"
 
 module TestHelpers
   # Run a block inside a fresh tmpdir as the cwd; restores afterwards.
   def in_tmpdir
-    Dir.mktmpdir("feature-deploys-test") do |dir|
+    Dir.mktmpdir("kamal-previews-test") do |dir|
       Dir.chdir(dir) do
         yield dir
       end

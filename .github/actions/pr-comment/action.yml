@@ -1,4 +1,4 @@
-name: feature-deploys / pr-comment
+name: kamal-previews / pr-comment
 description: |
   Posts (or updates in place) a single rolling comment on the PR with the
   current preview-environment status. Identifies its own previous comment
@@ -31,7 +31,7 @@ inputs:
   marker:
     description: Hidden HTML marker used to identify our previous comment.
     required: false
-    default: <!-- feature-deploys:status -->
+    default: <!-- kamal-previews:status -->
 
 runs:
   using: composite
@@ -81,7 +81,7 @@ $emoji $status
 "
         body+="| Workflow run | [$RUN_ID]($SERVER_URL/$GH_REPO/actions/runs/$RUN_ID) |
 
-<sub>Posted by [feature-deploys](https://github.com/web-ascender/github-actions-kamal-previews).</sub>"
+<sub>Posted by [kamal-previews](https://github.com/web-ascender/github-actions-kamal-previews).</sub>"
 
         # Find existing comment by marker
         existing_id="$(gh api -H 'Accept: application/vnd.github+json' \

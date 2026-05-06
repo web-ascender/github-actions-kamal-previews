@@ -1,4 +1,4 @@
-name: feature-deploys
+name: kamal-previews
 description: |
   Preview environments for Kamal-deployed Rails apps. Open a pull request,
   get a per-PR Kamal app at a unique URL with a freshly cloned staging
@@ -22,7 +22,7 @@ description: |
             - uses: <your-vpn-action>@v1
               with: { private-key: ..., public-key: ..., endpoint: ..., interface-ip: ..., routes: ... }
 
-            - uses: web-ascender/feature-deploys@v1
+            - uses: web-ascender/github-actions-kamal-previews@v1
               with:
                 base-deploy-file: config/deploy.staging.yml
                 domain-suffix:    preview.example.com
@@ -43,11 +43,11 @@ description: |
   WireGuard / VPN setup is intentionally NOT in this action — pair it with
   any VPN action you already trust (e.g. `<your-vpn-action>`)
   as a sibling step. Tunnels established in earlier steps remain active for
-  the subsequent `feature-deploys` step in the same job.
+  the subsequent `kamal-previews` step in the same job.
 
   For multi-job concurrency control, branch-pattern filtering, or the
   max-active-previews cap, prefer the reusable workflow at
-  `web-ascender/feature-deploys/.github/workflows/preview.yml@v1` (which
+  `web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1` (which
   does have integrated VPN inputs because reusable workflows can't compose
   with sibling steps the way actions can).
 
@@ -115,7 +115,7 @@ runs:
         elif [ "$EVENT_NAME" = "delete" ] && [ "$EVENT_REF_TYPE" = "branch" ]; then
           mode=teardown
         else
-          echo "::warning::feature-deploys can't infer a mode from event=$EVENT_NAME action=${EVENT_ACTION:-} ref_type=${EVENT_REF_TYPE:-}; skipping."
+          echo "::warning::kamal-previews can't infer a mode from event=$EVENT_NAME action=${EVENT_ACTION:-} ref_type=${EVENT_REF_TYPE:-}; skipping."
           mode=skip
         fi
         echo "mode=$mode" >> "$GITHUB_OUTPUT"
@@ -160,7 +160,7 @@ runs:
         fi
 
     # ── Self-checkout for sub-actions + scripts ───────────────────────────
-    - id: fd_meta
+    - id: kp_meta
       if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true'
       shell: bash
       env:
@@ -170,22 +170,22 @@ runs:
         # When the action is run locally (e.g. by `act` or in CI on this
         # very repo), action_repository is empty — fall back to a sane
         # default so the self-checkout step still works.
-        repo="${ACTION_REPO:-web-ascender/feature-deploys}"
+        repo="${ACTION_REPO:-web-ascender/github-actions-kamal-previews}"
         ref="${ACTION_REF:-main}"
         echo "repo=$repo" >> "$GITHUB_OUTPUT"
         echo "ref=$ref" >> "$GITHUB_OUTPUT"
-        echo "feature-deploys: repo=$repo ref=$ref"
+        echo "kamal-previews: repo=$repo ref=$ref"
 
     - if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true'
       uses: actions/checkout@v4
       with:
-        repository: ${{ steps.fd_meta.outputs.repo }}
-        ref: ${{ steps.fd_meta.outputs.ref }}
-        path: .feature-deploys
+        repository: ${{ steps.kp_meta.outputs.repo }}
+        ref: ${{ steps.kp_meta.outputs.ref }}
+        path: .kamal-previews
 
     # ── Setup ─────────────────────────────────────────────────────────────
     - if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true'
-      uses: ./.feature-deploys/.github/actions/setup
+      uses: ./.kamal-previews/.github/actions/setup
       with:
         ruby-version: ${{ inputs.ruby-version }}
         kamal-version: ${{ inputs.kamal-version }}
@@ -198,7 +198,7 @@ runs:
     # ── Generate per-PR Kamal config ──────────────────────────────────────
     - id: config
       if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true'
-      uses: ./.feature-deploys/.github/actions/generate-config
+      uses: ./.kamal-previews/.github/actions/generate-config
       with:
         branch-name: ${{ steps.branch.outputs.name }}
         base-deploy-file: ${{ inputs.base-deploy-file }}
@@ -237,13 +237,13 @@ runs:
 
     # ── DEPLOY PATH ──────────────────────────────────────────────────────
     - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true'
-      uses: ./.feature-deploys/.github/actions/deployment-status
+      uses: ./.kamal-previews/.github/actions/deployment-status
       with:
         state: created
         environment-name: preview-${{ steps.config.outputs.slug }}
 
     - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true'
-      uses: ./.feature-deploys/.github/actions/pr-comment
+      uses: ./.kamal-previews/.github/actions/pr-comment
       with:
         state: building
         url: ${{ steps.config.outputs.url }}
@@ -251,7 +251,7 @@ runs:
         database-name: ${{ steps.config.outputs.database_name }}
 
     - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && inputs.database-engine != 'none'
-      uses: ./.feature-deploys/.github/actions/clone-database
+      uses: ./.kamal-previews/.github/actions/clone-database
       with:
         engine: ${{ inputs.database-engine }}
         host: ${{ inputs.deploy-host }}
@@ -274,19 +274,19 @@ runs:
         sqlite-also-clone: ${{ inputs.sqlite-also-clone }}
 
     - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true'
-      uses: ./.feature-deploys/.github/actions/deploy
+      uses: ./.kamal-previews/.github/actions/deploy
       with:
         destination: ${{ steps.config.outputs.destination }}
 
     - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && success()
-      uses: ./.feature-deploys/.github/actions/deployment-status
+      uses: ./.kamal-previews/.github/actions/deployment-status
       with:
         state: success
         environment-name: preview-${{ steps.config.outputs.slug }}
         url: ${{ steps.config.outputs.url }}
 
     - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && success()
-      uses: ./.feature-deploys/.github/actions/pr-comment
+      uses: ./.kamal-previews/.github/actions/pr-comment
       with:
         state: ready
         url: ${{ steps.config.outputs.url }}
@@ -294,13 +294,13 @@ runs:
         database-name: ${{ steps.config.outputs.database_name }}
 
     - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && failure()
-      uses: ./.feature-deploys/.github/actions/deployment-status
+      uses: ./.kamal-previews/.github/actions/deployment-status
       with:
         state: failure
         environment-name: preview-${{ steps.config.outputs.slug }}
 
     - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && failure()
-      uses: ./.feature-deploys/.github/actions/pr-comment
+      uses: ./.kamal-previews/.github/actions/pr-comment
       with:
         state: failed
         destination: ${{ steps.config.outputs.destination }}
@@ -308,12 +308,12 @@ runs:
 
     # ── TEARDOWN PATH ────────────────────────────────────────────────────
     - if: steps.dispatch.outputs.mode == 'teardown'
-      uses: ./.feature-deploys/.github/actions/teardown
+      uses: ./.kamal-previews/.github/actions/teardown
       with:
         destination: ${{ steps.config.outputs.destination }}
 
     - if: steps.dispatch.outputs.mode == 'teardown' && inputs.database-engine != 'none'
-      uses: ./.feature-deploys/.github/actions/drop-database
+      uses: ./.kamal-previews/.github/actions/drop-database
       with:
         engine: ${{ inputs.database-engine }}
         host: ${{ inputs.deploy-host }}
@@ -334,13 +334,13 @@ runs:
         sqlite-also-drop: ${{ inputs.sqlite-also-clone }}
 
     - if: steps.dispatch.outputs.mode == 'teardown' && always()
-      uses: ./.feature-deploys/.github/actions/deployment-status
+      uses: ./.kamal-previews/.github/actions/deployment-status
       with:
         state: removed
         environment-name: preview-${{ steps.config.outputs.slug }}
 
     - if: steps.dispatch.outputs.mode == 'teardown' && always() && github.event_name == 'pull_request'
-      uses: ./.feature-deploys/.github/actions/pr-comment
+      uses: ./.kamal-previews/.github/actions/pr-comment
       with:
         state: removed
         destination: ${{ steps.config.outputs.destination }}

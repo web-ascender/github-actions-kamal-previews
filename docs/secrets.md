@@ -1,10 +1,10 @@
 # Secrets
 
-feature-deploys keeps the secret surface area as small as it can. The only
+kamal-previews keeps the secret surface area as small as it can. The only
 secrets the GitHub Actions workflow itself needs are:
 
 - `SSH_PRIVATE_KEY` — registered with the deploy host. Used both for
-  Kamal's SSH connection and for feature-deploys' database scripts that
+  Kamal's SSH connection and for kamal-previews' database scripts that
   ssh to the host to run clone/drop operations.
 - Database admin credentials (`PG_*` or `MYSQL_*`) — only for postgres /
   mysql. SQLite needs nothing here.
@@ -56,11 +56,11 @@ service account token:
 
 ```yaml
 # In your repo's .github/workflows/preview.yml, add an env var that
-# feature-deploys' workflow inherits. Workflows called via `uses:` see env
+# kamal-previews' workflow inherits. Workflows called via `uses:` see env
 # vars set on the calling workflow.
 jobs:
   preview:
-    uses: web-ascender/feature-deploys/.github/workflows/preview.yml@v1
+    uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1
     with:
       base-secrets-file: .kamal/secrets.staging
       ...

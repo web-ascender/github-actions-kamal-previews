@@ -1,12 +1,12 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Entry point for the feature-deploys CLI. Designed to run from any working
+# Entry point for the kamal-previews CLI. Designed to run from any working
 # directory — adjust $LOAD_PATH so the lib/ next to bin/ is discoverable.
 
 lib_path = File.expand_path("../lib", __dir__)
 $LOAD_PATH.unshift(lib_path) unless $LOAD_PATH.include?(lib_path)
 
-require "feature_deploys"
+require "kamal_previews"
 
-FeatureDeploys::CLI.run(ARGV)
+KamalPreviews::CLI.run(ARGV)

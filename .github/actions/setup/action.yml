@@ -1,12 +1,12 @@
-name: feature-deploys / setup
+name: kamal-previews / setup
 description: |
   Installs Ruby, the Kamal CLI, the SSH agent (with the deploy key loaded),
-  and Docker Buildx. The composite action picked up by feature-deploys'
+  and Docker Buildx. The composite action picked up by kamal-previews'
   reusable workflow before any deploy or teardown step.
 
 inputs:
   ruby-version:
-    description: Ruby version installed by ruby/setup-ruby. Used both to run feature-deploys' own scripts and to invoke `kamal`.
+    description: Ruby version installed by ruby/setup-ruby. Used both to run kamal-previews' own scripts and to invoke `kamal`.
     required: false
     default: "3.3"
   kamal-version:

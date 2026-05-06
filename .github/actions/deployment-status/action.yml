@@ -1,4 +1,4 @@
-name: feature-deploys / deployment-status
+name: kamal-previews / deployment-status
 description: |
   Creates or updates a GitHub Deployment so the PR shows the native
   "View deployment" button. On `created`, marks the deployment in_progress,
@@ -63,7 +63,7 @@ runs:
               -F transient_environment=true \
               -F auto_inactive=true \
               -F required_contexts:='[]' \
-              -f description="feature-deploys preview environment" \
+              -f description="kamal-previews preview environment" \
               --jq '.id')"
             gh api --method POST -H 'Accept: application/vnd.github+json' \
               "/repos/$GH_REPO/deployments/$deployment_id/statuses" \

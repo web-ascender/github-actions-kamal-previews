@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-module FeatureDeploys
+module KamalPreviews
   # Sanitizes a Git branch name into the two flavors of slug we need:
   #
   #   * `slug` — DNS-safe (a-z, 0-9, '-'). Used for subdomains and Kamal
@@ -26,7 +26,7 @@ module FeatureDeploys
       end
     end
 
-    class InvalidBranchName < FeatureDeploys::Error; end
+    class InvalidBranchName < KamalPreviews::Error; end
 
     def self.call(branch_name, prefix_strip: DEFAULT_PREFIX_STRIP)
       new(branch_name, prefix_strip: prefix_strip).call

@@ -1,4 +1,4 @@
-name: feature-deploys / drop-database
+name: kamal-previews / drop-database
 description: |
   Drops the per-PR database during teardown. Mirrors the inputs of
   `clone-database`.

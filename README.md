@@ -1,4 +1,4 @@
-# feature-deploys
+# kamal-previews
 
 GitHub-Actions-driven preview environments for Rails apps deployed with
 [Kamal 2](https://kamal-deploy.org). Open a PR, get a fresh app at a unique
@@ -6,12 +6,12 @@ URL with a freshly cloned staging database. Close the PR, everything goes
 away.
 
 ```
-Pull Request opened ───▶ web-ascender/feature-deploys ─┬─▶ kamal deploy -d <slug>
+Pull Request opened ───▶ web-ascender/github-actions-kamal-previews ─┬─▶ kamal deploy -d <slug>
                                                        ├─▶ clone staging DB → myapp_<slug>
                                                        ├─▶ post URL on PR comment
                                                        └─▶ register GitHub Deployment
 
-Pull Request closed ───▶ web-ascender/feature-deploys ─┬─▶ kamal app remove -d <slug>
+Pull Request closed ───▶ web-ascender/github-actions-kamal-previews ─┬─▶ kamal app remove -d <slug>
                                                        ├─▶ drop database myapp_<slug>
                                                        ├─▶ update PR comment
                                                        └─▶ deactivate GitHub Deployment
@@ -61,7 +61,7 @@ permissions:
   deployments: write       # Deployments API
 
 concurrency:
-  group: feature-deploys-${{ github.event.pull_request.number || github.event.ref || github.ref }}
+  group: kamal-previews-${{ github.event.pull_request.number || github.event.ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
 
 jobs:
@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Optional: open a WireGuard tunnel if your deploy host is private.
-      # WireGuard and feature-deploys are independent concerns — compose
+      # WireGuard and kamal-previews are independent concerns — compose
       # them as sibling steps. Drop this step if your host is public.
       - uses: <your-vpn-action>@v1
         with:
@@ -81,7 +81,7 @@ jobs:
           endpoint:     "vpn.example.com:51820"
           routes:       '["203.0.113.42"]'
 
-      - uses: web-ascender/feature-deploys@v1
+      - uses: web-ascender/github-actions-kamal-previews@v1
         with:
           base-deploy-file:        config/deploy.staging.yml
           base-secrets-file:       .kamal/secrets.staging
@@ -116,7 +116,7 @@ walkthrough including DNS, TLS, secrets, and host setup.
 ## Reusable-workflow form (advanced)
 
 Prefer the reusable workflow form
-(`uses: web-ascender/feature-deploys/.github/workflows/preview.yml@v1`)
+(`uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1`)
 when you want job-level features like matrix-fanned parallel orphan
 cleanup or GitHub's job-level concurrency UI. It does NOT support
 WireGuard pairing — workflows can't host sibling steps the way actions
@@ -128,7 +128,7 @@ See [`examples/README.md`](examples/README.md) for the comparison.
 The work splits into four layers:
 
 1. **Top-level composite action** (`action.yml`) — the simple
-   `uses: web-ascender/feature-deploys@v1` entry point. Auto-dispatches
+   `uses: web-ascender/github-actions-kamal-previews@v1` entry point. Auto-dispatches
    deploy vs. teardown based on the triggering event.
 2. **Reusable workflow** (`.github/workflows/preview.yml`) — alternate
    entry point for adopters who want job-level features (matrix
@@ -137,7 +137,7 @@ The work splits into four layers:
    building blocks both entry points share: `setup`, `generate-config`,
    `clone-database`, `deploy`, `teardown`, `pr-comment`,
    `deployment-status`. Independently usable.
-4. **Stdlib-only Ruby library** (`lib/feature_deploys/`) — branch-name
+4. **Stdlib-only Ruby library** (`lib/kamal_previews/`) — branch-name
    sanitization and Kamal config generation. Runs on any Ruby ≥ 3.0
    without Bundler.
 

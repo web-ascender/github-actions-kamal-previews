@@ -5,7 +5,7 @@ top-level composite actions.
 
 ## Reusable workflow inputs
 
-`web-ascender/feature-deploys/.github/workflows/preview.yml@v1`
+`web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1`
 
 ### Required
 
@@ -83,7 +83,7 @@ auto-pass through.
 
 ## Sweep workflow inputs
 
-`web-ascender/feature-deploys/.github/workflows/sweep.yml@v1`
+`web-ascender/github-actions-kamal-previews/.github/workflows/sweep.yml@v1`
 
 Same shape as the preview workflow, plus:
 
@@ -108,7 +108,7 @@ via `needs.preview.outputs.*` if you wrap it):
 
 ## Environment variables injected into the per-PR Kamal app
 
-feature-deploys writes these to `env.clear` of every generated
+kamal-previews writes these to `env.clear` of every generated
 `config/deploy.<destination>.yml`. Your application code can read them.
 
 | Var | Value | Notes |
@@ -121,13 +121,13 @@ feature-deploys writes these to `env.clear` of every generated
 
 Plus anything you pass via `env-overrides:`.
 
-## CLI: `bin/feature-deploys`
+## CLI: `bin/kamal-previews`
 
 ```
-feature-deploys generate    --branch <name> --base-deploy-file <path> --domain-suffix <suffix> [options]
-feature-deploys slugify     --branch <name>
-feature-deploys version
-feature-deploys help
+kamal-previews generate    --branch <name> --base-deploy-file <path> --domain-suffix <suffix> [options]
+kamal-previews slugify     --branch <name>
+kamal-previews version
+kamal-previews help
 ```
 
 Run any subcommand with `--help` for full options.

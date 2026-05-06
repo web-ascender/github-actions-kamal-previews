@@ -6,13 +6,13 @@ class ConfigGeneratorTest < Minitest::Test
   include TestHelpers
 
   def namer(branch = "feature/awesome-thing")
-    FeatureDeploys::Namer.call(branch)
+    KamalPreviews::Namer.call(branch)
   end
 
   def test_writes_per_pr_deploy_file
     in_tmpdir do
       write_base_deploy
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com"
@@ -36,7 +36,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_database_name_substitution
     in_tmpdir do
       write_base_deploy
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -52,7 +52,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_base_database_token_in_pattern
     in_tmpdir do
       write_base_deploy
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -67,8 +67,8 @@ class ConfigGeneratorTest < Minitest::Test
   def test_raises_when_pattern_uses_base_database_but_none_given
     in_tmpdir do
       write_base_deploy
-      err = assert_raises(FeatureDeploys::ConfigGenerator::Error) do
-        FeatureDeploys::ConfigGenerator.new(
+      err = assert_raises(KamalPreviews::ConfigGenerator::Error) do
+        KamalPreviews::ConfigGenerator.new(
           namer_result: namer,
           base_deploy_file: "config/deploy.staging.yml",
           domain_suffix: "preview.example.com",
@@ -82,7 +82,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_image_tag_override_replaces_existing_tag
     in_tmpdir do
       write_base_deploy("config/deploy.staging.yml", "image" => "acme/myapp:staging")
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -96,7 +96,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_image_tag_override_appends_when_no_existing_tag
     in_tmpdir do
       write_base_deploy
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -110,7 +110,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_image_tag_preserves_registry_port
     in_tmpdir do
       write_base_deploy("config/deploy.staging.yml", "image" => "registry.example.com:5000/acme/myapp:staging")
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -124,7 +124,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_env_overrides_merged
     in_tmpdir do
       write_base_deploy
-      FeatureDeploys::ConfigGenerator.new(
+      KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -142,7 +142,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_env_secret_overrides_appended_uniquely
     in_tmpdir do
       write_base_deploy
-      FeatureDeploys::ConfigGenerator.new(
+      KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -158,7 +158,7 @@ class ConfigGeneratorTest < Minitest::Test
     in_tmpdir do
       write_base_deploy
       write_base_secrets
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         base_secrets_file: ".kamal/secrets.staging",
@@ -174,7 +174,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_secrets_file_skipped_when_not_provided
     in_tmpdir do
       write_base_deploy
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com"
@@ -186,7 +186,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_destination_pattern_can_be_customized
     in_tmpdir do
       write_base_deploy
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -200,7 +200,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_service_pattern_can_be_customized
     in_tmpdir do
       write_base_deploy
-      FeatureDeploys::ConfigGenerator.new(
+      KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -214,7 +214,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_domain_label_pattern_can_be_customized
     in_tmpdir do
       write_base_deploy
-      FeatureDeploys::ConfigGenerator.new(
+      KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "example.com",
@@ -228,7 +228,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_deploy_timeout_override
     in_tmpdir do
       write_base_deploy
-      FeatureDeploys::ConfigGenerator.new(
+      KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -242,7 +242,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_builder_context_override
     in_tmpdir do
       write_base_deploy
-      FeatureDeploys::ConfigGenerator.new(
+      KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -256,7 +256,7 @@ class ConfigGeneratorTest < Minitest::Test
   def test_memory_and_cpu_limits_applied_to_array_form_role
     in_tmpdir do
       write_base_deploy("config/deploy.staging.yml", "servers" => {"web" => ["10.0.0.1", "10.0.0.2"]})
-      FeatureDeploys::ConfigGenerator.new(
+      KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -279,7 +279,7 @@ class ConfigGeneratorTest < Minitest::Test
         }
       }
       write_base_deploy("config/deploy.staging.yml", base)
-      FeatureDeploys::ConfigGenerator.new(
+      KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com",
@@ -299,7 +299,7 @@ class ConfigGeneratorTest < Minitest::Test
     in_tmpdir do
       base = {"servers" => {"web" => ["10.0.0.1"]}}
       write_base_deploy("config/deploy.staging.yml", base)
-      FeatureDeploys::ConfigGenerator.new(
+      KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com"
@@ -312,8 +312,8 @@ class ConfigGeneratorTest < Minitest::Test
 
   def test_raises_on_missing_base_deploy_file
     in_tmpdir do
-      err = assert_raises(FeatureDeploys::ConfigGenerator::Error) do
-        FeatureDeploys::ConfigGenerator.new(
+      err = assert_raises(KamalPreviews::ConfigGenerator::Error) do
+        KamalPreviews::ConfigGenerator.new(
           namer_result: namer,
           base_deploy_file: "config/missing.yml",
           domain_suffix: "preview.example.com"
@@ -326,8 +326,8 @@ class ConfigGeneratorTest < Minitest::Test
   def test_raises_on_missing_secrets_file
     in_tmpdir do
       write_base_deploy
-      err = assert_raises(FeatureDeploys::ConfigGenerator::Error) do
-        FeatureDeploys::ConfigGenerator.new(
+      err = assert_raises(KamalPreviews::ConfigGenerator::Error) do
+        KamalPreviews::ConfigGenerator.new(
           namer_result: namer,
           base_deploy_file: "config/deploy.staging.yml",
           base_secrets_file: ".kamal/secrets.missing",
@@ -342,8 +342,8 @@ class ConfigGeneratorTest < Minitest::Test
     in_tmpdir do
       FileUtils.mkdir_p("config")
       File.write("config/deploy.staging.yml", YAML.dump({"image" => "acme/myapp"}))
-      err = assert_raises(FeatureDeploys::ConfigGenerator::Error) do
-        FeatureDeploys::ConfigGenerator.new(
+      err = assert_raises(KamalPreviews::ConfigGenerator::Error) do
+        KamalPreviews::ConfigGenerator.new(
           namer_result: namer,
           base_deploy_file: "config/deploy.staging.yml",
           domain_suffix: "preview.example.com"
@@ -374,7 +374,7 @@ class ConfigGeneratorTest < Minitest::Test
       FileUtils.mkdir_p("config")
       File.write("config/deploy.staging.yml", raw)
 
-      result = FeatureDeploys::ConfigGenerator.new(
+      result = KamalPreviews::ConfigGenerator.new(
         namer_result: namer,
         base_deploy_file: "config/deploy.staging.yml",
         domain_suffix: "preview.example.com"

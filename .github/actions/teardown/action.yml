@@ -1,4 +1,4 @@
-name: feature-deploys / teardown
+name: kamal-previews / teardown
 description: |
   Runs `kamal app remove -d <destination>` to stop and uninstall the per-PR
   app. Optionally removes the generated `config/deploy.<destination>.yml`

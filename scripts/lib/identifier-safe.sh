@@ -10,21 +10,21 @@
 # stricter than what PostgreSQL/MySQL actually accept; we only ever generate
 # identifiers from `db_slug` (which uses the same alphabet), so the tighter
 # rule catches surprises like injected SQL fragments.
-fd_assert_identifier() {
+kp_assert_identifier() {
   local name="$1"
   local label="${2:-identifier}"
 
   if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]]; then
-    echo "[feature-deploys] Refusing to use ${label} '${name}' — must match ^[A-Za-z_][A-Za-z0-9_]{0,62}$" >&2
+    echo "[kamal-previews] Refusing to use ${label} '${name}' — must match ^[A-Za-z_][A-Za-z0-9_]{0,62}$" >&2
     return 1
   fi
 }
 
-fd_log() {
-  echo "[feature-deploys] $*"
+kp_log() {
+  echo "[kamal-previews] $*"
 }
 
-fd_die() {
-  echo "[feature-deploys] $*" >&2
+kp_die() {
+  echo "[kamal-previews] $*" >&2
   exit 1
 }

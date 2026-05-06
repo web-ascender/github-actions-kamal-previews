@@ -1,8 +1,8 @@
-name: feature-deploys / generate-config
+name: kamal-previews / generate-config
 description: |
   Sanitizes the branch name into url + db slugs, then writes a per-PR Kamal
   destination file (config/deploy.<slug>.yml) and copies the matching secrets
-  file from the supplied base files. Wraps `bin/feature-deploys generate`.
+  file from the supplied base files. Wraps `bin/kamal-previews generate`.
 
 inputs:
   branch-name:
@@ -146,7 +146,7 @@ runs:
       run: |
         set -euo pipefail
 
-        cmd=(${{ github.action_path }}/../../../bin/feature-deploys generate
+        cmd=(${{ github.action_path }}/../../../bin/kamal-previews generate
           --branch "$GH_BRANCH"
           --base-deploy-file "$GH_BASE_DEPLOY_FILE"
           --domain-suffix "$GH_DOMAIN_SUFFIX"

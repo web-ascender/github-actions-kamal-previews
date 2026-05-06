@@ -1,4 +1,4 @@
-# feature-deploys / preview environment lifecycle.
+# kamal-previews / preview environment lifecycle.
 #
 # A reusable workflow that consumers call from their own repo with `uses:`.
 # Triggers on the same events the consumer's workflow does — typically
@@ -34,7 +34,7 @@
 #         database-name-pattern: "myapp_{db_slug}"
 #       secrets: inherit
 
-name: feature-deploys / preview
+name: kamal-previews / preview
 
 on:
   workflow_call:
@@ -109,7 +109,7 @@ permissions:
 # Concurrency group keyed by branch / PR / deleted ref. Cancel in-flight
 # deploys (latest push wins) but never cancel teardowns.
 concurrency:
-  group: feature-deploys-${{ github.event.pull_request.number || github.event.ref || github.ref }}
+  group: kamal-previews-${{ github.event.pull_request.number || github.event.ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
 
 jobs:
@@ -154,8 +154,8 @@ jobs:
       - name: Check out caller's repo
         uses: actions/checkout@v4
 
-      - name: Resolve feature-deploys ref
-        id: fd_ref
+      - name: Resolve kamal-previews ref
+        id: kp_ref
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
         # Parse `org/repo/.github/workflows/preview.yml@<ref>` — `ref` is the
@@ -168,16 +168,16 @@ jobs:
           ref="${WORKFLOW_REF##*@}"
           echo "repo=$repo" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "feature-deploys: repo=$repo ref=$ref"
+          echo "kamal-previews: repo=$repo ref=$ref"
 
-      - name: Check out feature-deploys (matching ref)
+      - name: Check out kamal-previews (matching ref)
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.fd_ref.outputs.repo }}
-          ref: ${{ steps.fd_ref.outputs.ref }}
-          path: .feature-deploys
+          repository: ${{ steps.kp_ref.outputs.repo }}
+          ref: ${{ steps.kp_ref.outputs.ref }}
+          path: .kamal-previews
 
-      - uses: ./.feature-deploys/.github/actions/setup
+      - uses: ./.kamal-previews/.github/actions/setup
         with:
           ruby-version: ${{ inputs.ruby-version }}
           kamal-version: ${{ inputs.kamal-version }}
@@ -186,7 +186,7 @@ jobs:
           registry-password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - id: config
-        uses: ./.feature-deploys/.github/actions/generate-config
+        uses: ./.kamal-previews/.github/actions/generate-config
         with:
           branch-name: ${{ github.head_ref }}
           base-deploy-file: ${{ inputs.base-deploy-file }}
@@ -247,7 +247,7 @@ jobs:
             msg="🚦 **Preview cap reached.** ${active_count} active preview environments are already running, which meets the cap of \`max-active-previews=${MAX_ACTIVE}\`. Close another preview PR (or wait for it to be torn down) and re-run this workflow."
             if [ -n "${PR_NUMBER:-}" ]; then
               gh api --method POST "/repos/$GH_REPO/issues/${PR_NUMBER}/comments" \
-                -f body="<!-- feature-deploys:status -->
+                -f body="<!-- kamal-previews:status -->
 $msg" >/dev/null || true
             fi
             echo "::error::$msg"
@@ -270,12 +270,12 @@ $msg" >/dev/null || true
           resolved="${resolved//\{db_slug\}/$DB_SLUG}"
           echo "path=$resolved" >> "$GITHUB_OUTPUT"
 
-      - uses: ./.feature-deploys/.github/actions/deployment-status
+      - uses: ./.kamal-previews/.github/actions/deployment-status
         with:
           state: created
           environment-name: preview-${{ steps.config.outputs.slug }}
 
-      - uses: ./.feature-deploys/.github/actions/pr-comment
+      - uses: ./.kamal-previews/.github/actions/pr-comment
         with:
           state: building
           url: ${{ steps.config.outputs.url }}
@@ -283,7 +283,7 @@ $msg" >/dev/null || true
           database-name: ${{ steps.config.outputs.database_name }}
 
       - if: inputs.database-engine != 'none'
-        uses: ./.feature-deploys/.github/actions/clone-database
+        uses: ./.kamal-previews/.github/actions/clone-database
         with:
           engine: ${{ inputs.database-engine }}
           host: ${{ inputs.deploy-host }}
@@ -305,19 +305,19 @@ $msg" >/dev/null || true
           sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
           sqlite-also-clone: ${{ inputs.sqlite-also-clone }}
 
-      - uses: ./.feature-deploys/.github/actions/deploy
+      - uses: ./.kamal-previews/.github/actions/deploy
         with:
           destination: ${{ steps.config.outputs.destination }}
 
       - if: success()
-        uses: ./.feature-deploys/.github/actions/deployment-status
+        uses: ./.kamal-previews/.github/actions/deployment-status
         with:
           state: success
           environment-name: preview-${{ steps.config.outputs.slug }}
           url: ${{ steps.config.outputs.url }}
 
       - if: success()
-        uses: ./.feature-deploys/.github/actions/pr-comment
+        uses: ./.kamal-previews/.github/actions/pr-comment
         with:
           state: ready
           url: ${{ steps.config.outputs.url }}
@@ -325,13 +325,13 @@ $msg" >/dev/null || true
           database-name: ${{ steps.config.outputs.database_name }}
 
       - if: failure()
-        uses: ./.feature-deploys/.github/actions/deployment-status
+        uses: ./.kamal-previews/.github/actions/deployment-status
         with:
           state: failure
           environment-name: preview-${{ steps.config.outputs.slug }}
 
       - if: failure()
-        uses: ./.feature-deploys/.github/actions/pr-comment
+        uses: ./.kamal-previews/.github/actions/pr-comment
         with:
           state: failed
           destination: ${{ steps.config.outputs.destination }}
@@ -347,8 +347,8 @@ $msg" >/dev/null || true
       - name: Check out caller's repo
         uses: actions/checkout@v4
 
-      - name: Resolve feature-deploys ref
-        id: fd_ref
+      - name: Resolve kamal-previews ref
+        id: kp_ref
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
@@ -360,11 +360,11 @@ $msg" >/dev/null || true
 
       - uses: actions/checkout@v4
         with:
-          repository: ${{ steps.fd_ref.outputs.repo }}
-          ref: ${{ steps.fd_ref.outputs.ref }}
-          path: .feature-deploys
+          repository: ${{ steps.kp_ref.outputs.repo }}
+          ref: ${{ steps.kp_ref.outputs.ref }}
+          path: .kamal-previews
 
-      - uses: ./.feature-deploys/.github/actions/setup
+      - uses: ./.kamal-previews/.github/actions/setup
         with:
           ruby-version: ${{ inputs.ruby-version }}
           kamal-version: ${{ inputs.kamal-version }}
@@ -386,7 +386,7 @@ $msg" >/dev/null || true
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
       - id: config
-        uses: ./.feature-deploys/.github/actions/generate-config
+        uses: ./.kamal-previews/.github/actions/generate-config
         with:
           branch-name: ${{ steps.branch.outputs.name }}
           base-deploy-file: ${{ inputs.base-deploy-file }}
@@ -416,12 +416,12 @@ $msg" >/dev/null || true
           resolved="${resolved//\{db_slug\}/$DB_SLUG}"
           echo "path=$resolved" >> "$GITHUB_OUTPUT"
 
-      - uses: ./.feature-deploys/.github/actions/teardown
+      - uses: ./.kamal-previews/.github/actions/teardown
         with:
           destination: ${{ steps.config.outputs.destination }}
 
       - if: inputs.database-engine != 'none'
-        uses: ./.feature-deploys/.github/actions/drop-database
+        uses: ./.kamal-previews/.github/actions/drop-database
         with:
           engine: ${{ inputs.database-engine }}
           host: ${{ inputs.deploy-host }}
@@ -442,13 +442,13 @@ $msg" >/dev/null || true
           sqlite-also-drop: ${{ inputs.sqlite-also-clone }}
 
       - if: always()
-        uses: ./.feature-deploys/.github/actions/deployment-status
+        uses: ./.kamal-previews/.github/actions/deployment-status
         with:
           state: removed
           environment-name: preview-${{ steps.config.outputs.slug }}
 
       - if: always() && github.event_name == 'pull_request'
-        uses: ./.feature-deploys/.github/actions/pr-comment
+        uses: ./.kamal-previews/.github/actions/pr-comment
         with:
           state: removed
           destination: ${{ steps.config.outputs.destination }}

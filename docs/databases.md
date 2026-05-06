@@ -1,6 +1,6 @@
 # Database engines
 
-feature-deploys ships built-in support for PostgreSQL, MySQL, and SQLite.
+kamal-previews ships built-in support for PostgreSQL, MySQL, and SQLite.
 This page covers engine-specific notes, sanitization, and the in-container
 clone alternative.
 
@@ -93,7 +93,7 @@ app. The cleanest layout:
 
 Per-PR Kamal config sets `DATABASE_URL` (or templates `database.yml`) to
 point at the per-PR file. Use the `FEATURE_BRANCH_SLUG` env var that
-feature-deploys injects:
+kamal-previews injects:
 
 ```yaml
 # config/database.yml in your app
@@ -130,7 +130,7 @@ Cons:
 
 To use this mode:
 
-1. Set `database-engine: none` in the workflow inputs (so feature-deploys
+1. Set `database-engine: none` in the workflow inputs (so kamal-previews
    doesn't run the host-side clone).
 2. Add a snippet to your `bin/docker-entrypoint`:
 

@@ -36,7 +36,7 @@ jobs:
           endpoint:    "vpn.example.com:51820"
           routes:      '["203.0.113.42"]'
 
-      - uses: web-ascender/feature-deploys/sweep@v1
+      - uses: web-ascender/github-actions-kamal-previews/sweep@v1
         with:
           base-deploy-file:      config/deploy.staging.yml
           domain-suffix:         preview.example.com

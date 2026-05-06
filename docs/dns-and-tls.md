@@ -27,7 +27,7 @@ Or, if you front everything with a load balancer / Cloudflare:
 ```
 
 Once the wildcard is in place, every new branch slug resolves
-automatically — feature-deploys never needs to provision DNS records.
+automatically — kamal-previews never needs to provision DNS records.
 
 ## Per-host TLS via kamal-proxy (default)
 
@@ -111,7 +111,7 @@ config.session_store :cookie_store, key: "_myapp_session",
   domain: nil  # use the request host
 ```
 
-`FEATURE_BRANCH=true` is set automatically by feature-deploys' generated
+`FEATURE_BRANCH=true` is set automatically by kamal-previews' generated
 deploy file, so you can branch on it.
 
 ## Custom DNS per branch (instead of wildcard)
@@ -123,4 +123,4 @@ but gain visibility / per-branch policy control.
 
 A built-in Cloudflare DNS provisioning hook is on the roadmap; for now,
 add it as a custom step in your calling workflow before the
-`feature-deploys` reusable-workflow call.
+`kamal-previews` reusable-workflow call.

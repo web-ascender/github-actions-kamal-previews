@@ -2,7 +2,7 @@
 
 Previews accumulate. Without bounds, ten open PRs on a busy repo means ten
 Kamal apps quietly sitting on your staging host eating RAM. This page
-covers the three knobs feature-deploys exposes for keeping that under
+covers the three knobs kamal-previews exposes for keeping that under
 control, plus the path forward when upstream Kamal ships scale-to-zero.
 
 ## TL;DR
@@ -25,7 +25,7 @@ in `kamal-previews` only triggered on `feature/*` branches.
 ```yaml
 jobs:
   preview:
-    uses: web-ascender/feature-deploys/.github/workflows/preview.yml@v1
+    uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1
     with:
       branch-pattern: "feature/**"     # bash glob (extglob enabled)
       ...
@@ -50,7 +50,7 @@ previews — the close / delete event still tears them down.
 ## 2. `memory-limit` and `cpu-limit` — cap each preview's resource use
 
 Kamal exposes raw `docker run` flags via `servers.<role>.options`.
-feature-deploys takes two of those — `--memory` and `--cpus` — and
+kamal-previews takes two of those — `--memory` and `--cpus` — and
 applies them across every server role in the per-PR generated config:
 
 ```yaml
@@ -91,7 +91,7 @@ The cap is **inclusive**: 5 means "five running, refuse the sixth." A
 re-deploy of a preview that's *already* counted doesn't trip the cap —
 you can keep pushing to existing PRs even when at the limit.
 
-The PR comment uses the same `<!-- feature-deploys:status -->` marker
+The PR comment uses the same `<!-- kamal-previews:status -->` marker
 as the regular status comment, so it occupies that slot until the next
 successful deploy replaces it.
 

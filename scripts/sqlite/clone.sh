@@ -40,23 +40,23 @@ source "${SCRIPT_DIR}/../lib/identifier-safe.sh"
 ALSO_CLONE="${ALSO_CLONE:-}"
 
 if [ ! -f "$SOURCE_PATH" ]; then
-  fd_die "Source SQLite file '${SOURCE_PATH}' not found."
+  kp_die "Source SQLite file '${SOURCE_PATH}' not found."
 fi
 
 if [ -f "$TARGET_PATH" ]; then
-  fd_log "Target SQLite file '${TARGET_PATH}' already exists — nothing to do."
+  kp_log "Target SQLite file '${TARGET_PATH}' already exists — nothing to do."
   exit 0
 fi
 
 # Make sure the target directory exists.
 mkdir -p "$(dirname "$TARGET_PATH")"
 
-fd_log "Checkpointing WAL on '${SOURCE_PATH}'…"
+kp_log "Checkpointing WAL on '${SOURCE_PATH}'…"
 # `PRAGMA wal_checkpoint(TRUNCATE)` blocks until all writes are merged into
 # the main DB file and the WAL is reset. Safe even if WAL isn't in use.
 sqlite3 "$SOURCE_PATH" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
 
-fd_log "Copying main DB file…"
+kp_log "Copying main DB file…"
 cp -p "$SOURCE_PATH" "$TARGET_PATH"
 
 # Auxiliary files (-wal, -shm) — copy if they exist; their absence is fine.
@@ -72,7 +72,7 @@ if [ -n "$ALSO_CLONE" ]; then
     src="${SOURCE_PATH%.*}${suffix}.${SOURCE_PATH##*.}"
     tgt="${TARGET_PATH%.*}${suffix}.${TARGET_PATH##*.}"
     if [ -f "$src" ]; then
-      fd_log "Copying companion DB '${src}' → '${tgt}'…"
+      kp_log "Copying companion DB '${src}' → '${tgt}'…"
       sqlite3 "$src" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
       cp -p "$src" "$tgt"
       for ext in -wal -shm; do
@@ -82,4 +82,4 @@ if [ -n "$ALSO_CLONE" ]; then
   done
 fi
 
-fd_log "Clone complete."
+kp_log "Clone complete."

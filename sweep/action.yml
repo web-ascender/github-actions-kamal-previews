@@ -1,4 +1,4 @@
-name: feature-deploys / sweep
+name: kamal-previews / sweep
 description: |
   Reconciles registered preview environments against open pull requests
   and tears down orphans (closed / deleted PRs whose teardown event was
@@ -21,7 +21,7 @@ description: |
             # Optional: VPN, if your deploy host is private.
             - uses: <your-vpn-action>@v1
               with: { private-key: ..., public-key: ..., endpoint: ..., interface-ip: ..., routes: ... }
-            - uses: web-ascender/feature-deploys/sweep@v1
+            - uses: web-ascender/github-actions-kamal-previews/sweep@v1
               with:
                 base-deploy-file: config/deploy.staging.yml
                 domain-suffix:    preview.example.com
@@ -38,7 +38,7 @@ description: |
   Orphans are processed sequentially — for a handful of stale previews per
   day, this is fine. Adopters who genuinely need parallel cleanup of many
   orphans should use the reusable-workflow form
-  (`web-ascender/feature-deploys/.github/workflows/sweep.yml@v1`), which
+  (`web-ascender/github-actions-kamal-previews/.github/workflows/sweep.yml@v1`), which
   uses a matrix to fan out.
 
 inputs:
@@ -66,24 +66,24 @@ inputs:
 runs:
   using: composite
   steps:
-    - id: fd_meta
+    - id: kp_meta
       shell: bash
       env:
         ACTION_REPO: ${{ github.action_repository }}
         ACTION_REF: ${{ github.action_ref }}
       run: |
-        repo="${ACTION_REPO:-web-ascender/feature-deploys}"
+        repo="${ACTION_REPO:-web-ascender/github-actions-kamal-previews}"
         ref="${ACTION_REF:-main}"
         echo "repo=$repo" >> "$GITHUB_OUTPUT"
         echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
     - uses: actions/checkout@v4
       with:
-        repository: ${{ steps.fd_meta.outputs.repo }}
-        ref: ${{ steps.fd_meta.outputs.ref }}
-        path: .feature-deploys
+        repository: ${{ steps.kp_meta.outputs.repo }}
+        ref: ${{ steps.kp_meta.outputs.ref }}
+        path: .kamal-previews
 
-    - uses: ./.feature-deploys/.github/actions/setup
+    - uses: ./.kamal-previews/.github/actions/setup
       with:
         ruby-version: ${{ inputs.ruby-version }}
         kamal-version: ${{ inputs.kamal-version }}
@@ -108,7 +108,7 @@ runs:
             | grep -E "^${ENV_PREFIX}" || true
         )
 
-        # Build a regex of prefixes to strip (matching feature-deploys' Namer).
+        # Build a regex of prefixes to strip (matching kamal-previews' Namer).
         prefix_re="$(echo "$PREFIX_STRIP" | tr ',' '|' | sed 's:/$::; s:/|:|:g; s:/$::')"
         slugify() {
           echo "$1" | tr '[:upper:]' '[:lower:]' \
@@ -181,7 +181,7 @@ runs:
         # actions can't loop with `uses:` calls per iteration. For each
         # orphan slug, generate the destination, then call kamal app
         # remove + drop the database via the same scripts the main flow
-        # uses (sourced from .feature-deploys/scripts/<engine>/).
+        # uses (sourced from .kamal-previews/scripts/<engine>/).
         while IFS= read -r slug; do
           echo "::group::Teardown for slug=$slug"
 
@@ -200,7 +200,7 @@ runs:
           [ -n "$DATABASE_NAME_PATTERN" ]  && gen_args+=(--database-name-pattern "$DATABASE_NAME_PATTERN")
           [ -n "$BASE_DATABASE" ]          && gen_args+=(--base-database "$BASE_DATABASE")
 
-          summary="$(.feature-deploys/bin/feature-deploys "${gen_args[@]}")"
+          summary="$(.kamal-previews/bin/kamal-previews "${gen_args[@]}")"
           dest="$(echo "$summary" | jq -r '.destination')"
           db_name="$(echo "$summary" | jq -r '.database_name // empty')"
           db_slug="$(echo "$summary" | jq -r '.db_slug')"
@@ -213,7 +213,7 @@ runs:
 
           # drop database (if applicable)
           if [ "$DATABASE_ENGINE" != "none" ]; then
-            scripts_dir="$(pwd)/.feature-deploys/scripts"
+            scripts_dir="$(pwd)/.kamal-previews/scripts"
             ssh_target="${SSH_USER}@${DEPLOY_HOST}"
             ssh_opts=(-o StrictHostKeyChecking=accept-new -p "$SSH_PORT")
             scp_opts=(-o StrictHostKeyChecking=accept-new -P "$SSH_PORT")

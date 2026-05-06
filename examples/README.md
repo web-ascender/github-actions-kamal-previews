@@ -13,7 +13,7 @@ adjust the `with:`, `env:`, and `secrets:` blocks for your environment.
 | [sqlite/preview.yml](sqlite/preview.yml)       | Your staging DB is SQLite (file on the deploy host). |
 
 Every example uses the **composite action** form (`uses:
-web-ascender/feature-deploys@v1`) — a single step inside a single job.
+web-ascender/github-actions-kamal-previews@v1`) — a single step inside a single job.
 This composes naturally with sibling steps like
 `<your-vpn-action>@v1` for VPN setup. See the
 [postgres example](postgres/preview.yml) for a worked WireGuard pairing.
@@ -28,7 +28,7 @@ workflows instead:
 ```yaml
 jobs:
   preview:
-    uses: web-ascender/feature-deploys/.github/workflows/preview.yml@v1
+    uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1
     with: { base-deploy-file: ..., domain-suffix: ..., deploy-host: ..., ... }
     secrets: inherit
 ```

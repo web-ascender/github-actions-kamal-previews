@@ -3,7 +3,7 @@
 require "json"
 require "optparse"
 
-module FeatureDeploys
+module KamalPreviews
   # Command-line interface for the namer + config generator. Prints a short
   # JSON summary to stdout (machine-friendly) and ALSO writes key/value pairs
   # to $GITHUB_OUTPUT when running inside GitHub Actions.
@@ -23,7 +23,7 @@ module FeatureDeploys
       case command
       when "generate" then generate(argv)
       when "slugify" then slugify(argv)
-      when "version", "--version", "-v" then puts FeatureDeploys::VERSION
+      when "version", "--version", "-v" then puts KamalPreviews::VERSION
       when nil, "help", "--help", "-h" then print_help
       else
         warn "Unknown command: #{command.inspect}\n\n"
@@ -84,7 +84,7 @@ module FeatureDeploys
     def parse_slugify(argv)
       opts = {prefix_strip: Namer::DEFAULT_PREFIX_STRIP.dup}
       OptionParser.new do |o|
-        o.banner = "Usage: feature-deploys slugify --branch <branch_name> [options]"
+        o.banner = "Usage: kamal-previews slugify --branch <branch_name> [options]"
         o.on("--branch BRANCH", "Branch name to sanitize") { |v| opts[:branch] = v }
         o.on("--prefix-strip PREFIXES", "Comma-separated prefixes to strip (default: #{Namer::DEFAULT_PREFIX_STRIP.join(",")})") { |v| opts[:prefix_strip] = v.split(",").map(&:strip).reject(&:empty?) }
         o.on("-h", "--help") { puts o; exit }
@@ -105,7 +105,7 @@ module FeatureDeploys
       }
 
       OptionParser.new do |o|
-        o.banner = "Usage: feature-deploys generate --branch <branch_name> --base-deploy-file <path> --domain-suffix <suffix> [options]"
+        o.banner = "Usage: kamal-previews generate --branch <branch_name> --base-deploy-file <path> --domain-suffix <suffix> [options]"
 
         o.on("--branch BRANCH") { |v| opts[:branch] = v }
         o.on("--prefix-strip PREFIXES") { |v| opts[:prefix_strip] = v.split(",").map(&:strip).reject(&:empty?) }
@@ -169,18 +169,18 @@ module FeatureDeploys
     end
 
     def die!(msg)
-      warn "feature-deploys: #{msg}"
+      warn "kamal-previews: #{msg}"
       exit 1
     end
 
     def print_help
       puts <<~HELP
-        feature-deploys — preview-environment helper for Kamal-deployed Rails apps.
+        kamal-previews — preview-environment helper for Kamal-deployed Rails apps.
 
         Usage:
-          feature-deploys generate    --branch <name> --base-deploy-file <path> --domain-suffix <suffix> [options]
-          feature-deploys slugify     --branch <name>
-          feature-deploys version
+          kamal-previews generate    --branch <name> --base-deploy-file <path> --domain-suffix <suffix> [options]
+          kamal-previews slugify     --branch <name>
+          kamal-previews version
 
         Run any subcommand with --help for details.
       HELP

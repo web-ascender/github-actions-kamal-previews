@@ -3,7 +3,7 @@
 require "fileutils"
 require "yaml"
 
-module FeatureDeploys
+module KamalPreviews
   # Generates a per-PR Kamal destination file by reading a base deploy.yml,
   # applying overrides driven by the configured templates, and writing the
   # result to `config/deploy.<destination>.yml`. Optionally copies the matching
@@ -22,7 +22,7 @@ module FeatureDeploys
       keyword_init: true
     )
 
-    class Error < FeatureDeploys::Error; end
+    class Error < KamalPreviews::Error; end
 
     DEFAULT_DOMAIN_LABEL = "{slug}"
     DEFAULT_SERVICE_PATTERN = "{base_service}-{slug}"

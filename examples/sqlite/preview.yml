@@ -22,7 +22,7 @@ permissions:
   deployments: write
 
 concurrency:
-  group: feature-deploys-${{ github.event.pull_request.number || github.event.ref || github.ref }}
+  group: kamal-previews-${{ github.event.pull_request.number || github.event.ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: web-ascender/feature-deploys@v1
+      - uses: web-ascender/github-actions-kamal-previews@v1
         with:
           base-deploy-file:           config/deploy.staging.yml
           base-secrets-file:          .kamal/secrets.staging

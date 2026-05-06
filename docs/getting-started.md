@@ -1,6 +1,6 @@
 # Getting started
 
-This guide walks through adopting feature-deploys in an existing Rails app
+This guide walks through adopting kamal-previews in an existing Rails app
 that already deploys to staging via Kamal 2. By the end you'll have a
 preview environment automatically created on every pull request.
 
@@ -13,7 +13,7 @@ your own values throughout.
 You need:
 
 1. **A Kamal-deployed staging app**, with `config/deploy.staging.yml` and
-   (optionally) `.kamal/secrets.staging`. feature-deploys uses these as the
+   (optionally) `.kamal/secrets.staging`. kamal-previews uses these as the
    template for each per-PR app — most settings (image, registry, builder,
    accessories, env tags) are inherited verbatim.
 2. **A staging host** that can run multiple Kamal apps simultaneously.
@@ -36,7 +36,7 @@ Decide what hostnames preview apps should get. The default is
 | `fix/123-bad-redirect`     | `123-bad-redirect` | `https://123-bad-redirect.preview.example.com` |
 | `bug/very-long-branch-name-that-keeps-going-forever` | first 50 chars (no trailing `-`) | … |
 
-Run `bin/feature-deploys slugify --branch <name>` from a clone of this repo
+Run `bin/kamal-previews slugify --branch <name>` from a clone of this repo
 to preview the slug for any branch name. If you want a different URL shape
 (e.g. `pr-123.preview.example.com`), see the
 [`domain-label-pattern`](reference.md#domain-label-pattern) reference.
@@ -62,7 +62,7 @@ If you proxy through Cloudflare, set encryption mode to **Full (strict)** —
 Most Kamal staging configs work out of the box. Two things to double-check:
 
 1. **`proxy:` is configured with `host:` set.** This is what tells
-   `kamal-proxy` to multiplex by hostname. feature-deploys overrides
+   `kamal-proxy` to multiplex by hostname. kamal-previews overrides
    `proxy.host` in each per-PR config but leaves the rest of the proxy block
    alone. Recommended: enable SSL for the proxy.
 
@@ -73,14 +73,14 @@ Most Kamal staging configs work out of the box. Two things to double-check:
      response_timeout: 60
    ```
 
-2. **Your image is buildable from a clean checkout.** feature-deploys runs
+2. **Your image is buildable from a clean checkout.** kamal-previews runs
    `kamal deploy` from the runner, which does a fresh clone. If you
    currently rely on uncommitted changes (e.g. via `builder.context: "."`
    in your staging config), set the `builder-context` input to override.
 
 ## Step 4: Make your app database-name-aware
 
-The per-PR app needs to know which database to connect to. feature-deploys
+The per-PR app needs to know which database to connect to. kamal-previews
 sets `DATABASE_NAME` (and `FEATURE_BRANCH_SLUG`, `FEATURE_BRANCH_DB_SLUG`,
 `FEATURE_BRANCH_LABEL`) on the per-PR app's environment. The simplest
 hookup is a one-liner in `config/database.yml`:
@@ -109,7 +109,7 @@ staging:
   queue:   { ..., database: <%= ENV.fetch("DATABASE_NAME") %>_queue }
 ```
 
-When configured this way, feature-deploys can clone all four. See
+When configured this way, kamal-previews can clone all four. See
 [`docs/databases.md`](databases.md#multi-database-rails-setups) for the
 clone hook.
 
@@ -134,7 +134,7 @@ permissions:
   deployments: write
 
 concurrency:
-  group: feature-deploys-${{ github.event.pull_request.number || github.event.ref || github.ref }}
+  group: kamal-previews-${{ github.event.pull_request.number || github.event.ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
 
 jobs:
@@ -143,7 +143,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: open a WireGuard tunnel before feature-deploys runs.
+      # Optional: open a WireGuard tunnel before kamal-previews runs.
       # Skip this step if your deploy host is publicly addressable.
       - uses: <your-vpn-action>@v1
         with:
@@ -153,7 +153,7 @@ jobs:
           endpoint:     "vpn.example.com:51820"
           routes:       '["203.0.113.42"]'
 
-      - uses: web-ascender/feature-deploys@v1
+      - uses: web-ascender/github-actions-kamal-previews@v1
         with:
           base-deploy-file:        config/deploy.staging.yml
           base-secrets-file:       .kamal/secrets.staging

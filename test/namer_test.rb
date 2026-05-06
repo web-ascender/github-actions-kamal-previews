@@ -4,7 +4,7 @@ require_relative "test_helper"
 
 class NamerTest < Minitest::Test
   def call(branch, **opts)
-    FeatureDeploys::Namer.call(branch, **opts)
+    KamalPreviews::Namer.call(branch, **opts)
   end
 
   def test_basic_branch_name
@@ -70,15 +70,15 @@ class NamerTest < Minitest::Test
   end
 
   def test_raises_on_empty_branch
-    assert_raises(FeatureDeploys::Namer::InvalidBranchName) { call("") }
+    assert_raises(KamalPreviews::Namer::InvalidBranchName) { call("") }
   end
 
   def test_raises_on_whitespace_only_branch
-    assert_raises(FeatureDeploys::Namer::InvalidBranchName) { call("   ") }
+    assert_raises(KamalPreviews::Namer::InvalidBranchName) { call("   ") }
   end
 
   def test_raises_when_branch_sanitizes_to_empty_string
-    assert_raises(FeatureDeploys::Namer::InvalidBranchName) { call("---") }
+    assert_raises(KamalPreviews::Namer::InvalidBranchName) { call("---") }
   end
 
   def test_dotted_branch_name_dots_become_separators

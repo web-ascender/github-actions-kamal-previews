@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to feature-deploys are documented here. The format is based
+All notable changes to kamal-previews are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 follows [Semantic Versioning](https://semver.org/).
 
@@ -13,7 +13,7 @@ follows [Semantic Versioning](https://semver.org/).
   and on branch delete.
 - Composite actions: `setup`, `generate-config`, `clone-database`,
   `drop-database`, `deploy`, `teardown`, `pr-comment`.
-- Stdlib-only Ruby library (`lib/feature_deploys/`) for branch-name
+- Stdlib-only Ruby library (`lib/kamal_previews/`) for branch-name
   sanitization and per-PR Kamal config generation.
 - Database adapters for PostgreSQL, MySQL, and SQLite (Docker-based, no client
   tools required on the deploy host).

@@ -1,12 +1,12 @@
 # Architecture
 
-feature-deploys is three layers stacked on top of standard Kamal 2 + GitHub
+kamal-previews is three layers stacked on top of standard Kamal 2 + GitHub
 Actions primitives:
 
 ```
                      ┌─────────────────────────────────────┐
    Consumer's repo ─►│  .github/workflows/preview.yml      │
-                     │  (calls web-ascender/feature-deploys │
+                     │  (calls web-ascender/github-actions-kamal-previews │
                      │   reusable workflow with `uses:`)   │
                      └─────────────────┬───────────────────┘
                                        │
@@ -27,7 +27,7 @@ Actions primitives:
                                        │
                                        ▼
                      ┌─────────────────────────────────────┐
-   Layer 3:          │  lib/feature_deploys/* (Ruby)        │
+   Layer 3:          │  lib/kamal_previews/* (Ruby)        │
    Plain code        │  scripts/{postgres,mysql,sqlite}/*   │
                      │  (Bash) + scripts/lib/                │
                      └─────────────────────────────────────┘
@@ -36,7 +36,7 @@ Actions primitives:
 Each layer can be used directly: a sufficiently advanced consumer might
 call the composite actions from their own workflow without going through
 the reusable workflow, and a script-only consumer might shell out to
-`bin/feature-deploys` from elsewhere.
+`bin/kamal-previews` from elsewhere.
 
 ## Layer 1: the reusable workflow
 
@@ -52,8 +52,8 @@ deploys (latest push wins) and `false` for teardowns.
 
 The workflow checks out the consumer's repo (via `actions/checkout@v4`)
 and *also* checks out this repo into a sibling subdirectory
-(`.feature-deploys/`) at the same ref the consumer pinned. The composite
-actions referenced as `./.feature-deploys/.github/actions/foo` are then
+(`.kamal-previews/`) at the same ref the consumer pinned. The composite
+actions referenced as `./.kamal-previews/.github/actions/foo` are then
 local to the runner.
 
 The "self-checkout at the same ref" pattern uses `${{ github.workflow_ref }}`,
@@ -69,7 +69,7 @@ focused unit:
 | Action | Responsibility |
 | --- | --- |
 | `setup`              | Install Ruby (for our scripts) and Kamal (for deploys). Load SSH key into ssh-agent. Optionally install Buildx + GHA cache + registry login. |
-| `generate-config`    | Wrap `bin/feature-deploys generate`. Sanitizes the branch name and writes `config/deploy.<slug>.yml` + secrets. |
+| `generate-config`    | Wrap `bin/kamal-previews generate`. Sanitizes the branch name and writes `config/deploy.<slug>.yml` + secrets. |
 | `clone-database`     | Upload the engine-specific clone script to the deploy host and run it (in a Docker container for postgres/mysql; directly for sqlite). |
 | `deploy`             | Run `kamal lock release` then `kamal deploy -d <slug>`. |
 | `teardown`           | Run `kamal lock release` then `kamal app remove -d <slug>`. Optionally clean up generated files. |
@@ -83,7 +83,7 @@ deploy logic.
 
 ## Layer 3: scripts and the Ruby library
 
-The Ruby library at `lib/feature_deploys/` is **stdlib-only** — no Bundler,
+The Ruby library at `lib/kamal_previews/` is **stdlib-only** — no Bundler,
 no Rails. Two classes:
 
 - `Namer` — sanitizes a branch name into `slug` (DNS-safe) and `db_slug`
@@ -91,7 +91,7 @@ no Rails. Two classes:
 - `ConfigGenerator` — reads the base Kamal deploy file, applies
   template-driven overrides, writes `config/deploy.<dest>.yml`.
 
-The CLI (`bin/feature-deploys`) wraps both with `generate` and `slugify`
+The CLI (`bin/kamal-previews`) wraps both with `generate` and `slugify`
 subcommands. It writes both a JSON summary to stdout AND key/value pairs
 to `$GITHUB_OUTPUT` when running inside a GitHub Actions step.
 
@@ -120,7 +120,7 @@ PR opened
 deploy job
   │
   ├─ checkout caller repo
-  ├─ checkout feature-deploys at matching ref
+  ├─ checkout kamal-previews at matching ref
   ├─ setup (Ruby, Kamal, SSH agent, Buildx)
   ├─ generate-config
   │     │

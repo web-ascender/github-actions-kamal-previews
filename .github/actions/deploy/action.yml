@@ -1,4 +1,4 @@
-name: feature-deploys / deploy
+name: kamal-previews / deploy
 description: |
   Runs `kamal deploy -d <destination>`. Releases any stale lock first to
   recover from previously interrupted deploys (Kamal's lock is a per-app

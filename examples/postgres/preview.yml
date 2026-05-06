@@ -2,7 +2,7 @@
 #
 # Composite-action form: a single job, single steps stack. The WireGuard
 # tunnel (if your deploy host is private) is a sibling step that runs
-# before feature-deploys — they're independent concerns and compose
+# before kamal-previews — they're independent concerns and compose
 # naturally.
 #
 # Repo-level GitHub Actions secrets the workflow expects:
@@ -28,7 +28,7 @@ permissions:
 # Concurrency keyed per-PR so multiple pushes don't deploy in parallel.
 # cancel-in-progress: true on deploys (latest push wins).
 concurrency:
-  group: feature-deploys-${{ github.event.pull_request.number || github.event.ref || github.ref }}
+  group: kamal-previews-${{ github.event.pull_request.number || github.event.ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
 
 jobs:
@@ -50,7 +50,7 @@ jobs:
           routes:         '["203.0.113.42"]'
 
       - name: Deploy / teardown preview
-        uses: web-ascender/feature-deploys@v1
+        uses: web-ascender/github-actions-kamal-previews@v1
         with:
           base-deploy-file:        config/deploy.staging.yml
           base-secrets-file:       .kamal/secrets.staging

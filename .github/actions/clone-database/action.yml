@@ -1,4 +1,4 @@
-name: feature-deploys / clone-database
+name: kamal-previews / clone-database
 description: |
   Clones the configured staging database into a per-PR target. Runs over SSH
   on the deploy host (so neither the GitHub runner nor any other machine
