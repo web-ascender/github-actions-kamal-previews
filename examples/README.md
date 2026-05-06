@@ -1,9 +1,9 @@
 # Examples
 
-Drop-in workflow files for each supported database engine. Copy the relevant
-file into your Rails app at `.github/workflows/preview.yml` (and
-`.github/workflows/preview-sweep.yml` for the optional sweeper) and adjust
-the `with:` and `secrets:` blocks for your environment.
+Drop-in workflow files for each supported database engine. Copy the
+relevant file into your Rails app at `.github/workflows/preview.yml` (and
+`.github/workflows/preview-sweep.yml` for the optional sweeper) and
+adjust the `with:`, `env:`, and `secrets:` blocks for your environment.
 
 | File | Use when |
 | --- | --- |
@@ -11,3 +11,28 @@ the `with:` and `secrets:` blocks for your environment.
 | [postgres/sweep.yml](postgres/sweep.yml)       | Optional daily orphan cleanup. |
 | [mysql/preview.yml](mysql/preview.yml)         | Your staging DB is MySQL. |
 | [sqlite/preview.yml](sqlite/preview.yml)       | Your staging DB is SQLite (file on the deploy host). |
+
+Every example uses the **composite action** form (`uses:
+web-ascender/feature-deploys@v1`) — a single step inside a single job.
+This composes naturally with sibling steps like
+`<your-vpn-action>@v1` for VPN setup. See the
+[postgres example](postgres/preview.yml) for a worked WireGuard pairing.
+
+## Reusable-workflow form (advanced)
+
+If you need job-level features that composite actions can't express —
+matrix-fanned parallel orphan cleanup, separate runners for deploy and
+teardown, GitHub's job-level concurrency UI — call the reusable
+workflows instead:
+
+```yaml
+jobs:
+  preview:
+    uses: web-ascender/feature-deploys/.github/workflows/preview.yml@v1
+    with: { base-deploy-file: ..., domain-suffix: ..., deploy-host: ..., ... }
+    secrets: inherit
+```
+
+The reusable workflow form does NOT support WireGuard pairing (workflows
+are jobs, not steps — there's no place to insert a sibling VPN step). If
+your deploy host is private, use the composite action form.

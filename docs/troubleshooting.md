@@ -130,7 +130,7 @@ need tuning — file an issue with your pattern and we'll add a knob.
 
 ## Where to file bugs
 
-Open an issue at https://github.com/web-ascender/github-actions-kamal-previews/issues
+Open an issue at https://github.com/web-ascender/feature-deploys/issues
 with:
 
 - The minimal example workflow file you're using (with secrets stripped).

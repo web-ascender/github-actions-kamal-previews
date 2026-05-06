@@ -116,8 +116,8 @@ clone hook.
 ## Step 5: Add the preview workflow
 
 Copy [`examples/postgres/preview.yml`](../examples/postgres/preview.yml)
-into your repo at `.github/workflows/preview.yml` and edit the `with:` and
-`secrets:` blocks. The minimum-viable shape:
+into your repo at `.github/workflows/preview.yml` and edit the `with:`
+and `env:` blocks. The minimum-viable shape:
 
 ```yaml
 name: Preview environment
@@ -133,29 +133,50 @@ permissions:
   pull-requests: write
   deployments: write
 
+concurrency:
+  group: feature-deploys-${{ github.event.pull_request.number || github.event.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+
 jobs:
   preview:
-    uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1
-    with:
-      base-deploy-file:        config/deploy.staging.yml
-      base-secrets-file:       .kamal/secrets.staging
-      domain-suffix:           preview.example.com
-      deploy-host:             staging.example.com
-      database-engine:         postgres
-      database-template:       myapp_staging
-      database-name-pattern:   "myapp_{db_slug}"
-    secrets:
-      SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-      PG_HOST:         ${{ secrets.PG_HOST }}
-      PG_USER:         ${{ secrets.PG_USER }}
-      PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Optional: open a WireGuard tunnel before feature-deploys runs.
+      # Skip this step if your deploy host is publicly addressable.
+      - uses: <your-vpn-action>@v1
+        with:
+          private-key:  ${{ secrets.VPN_PRIVATE_KEY }}
+          public-key:   ${{ secrets.VPN_PUBLIC_KEY }}
+          interface-ip: "10.1.1.100/24"
+          endpoint:     "vpn.example.com:51820"
+          routes:       '["203.0.113.42"]'
+
+      - uses: web-ascender/feature-deploys@v1
+        with:
+          base-deploy-file:        config/deploy.staging.yml
+          base-secrets-file:       .kamal/secrets.staging
+          domain-suffix:           preview.example.com
+          deploy-host:             staging.example.com
+          database-engine:         postgres
+          database-template:       myapp_staging
+          database-name-pattern:   "myapp_{db_slug}"
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          PG_HOST:         ${{ secrets.PG_HOST }}
+          PG_USER:         ${{ secrets.PG_USER }}
+          PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
 ```
 
-Add the secrets at the **repo** level under Settings → Secrets and variables
-→ Actions:
+Add the secrets at the **repo** level under Settings → Secrets and
+variables → Actions:
 
 - `DEPLOY_SSH_KEY` — same key Kamal uses
-- `PG_HOST`, `PG_USER`, `PG_PASSWORD` — admin creds on the staging DB cluster
+- `PG_HOST`, `PG_USER`, `PG_PASSWORD` — admin creds on the staging DB
+  cluster
+- `VPN_PRIVATE_KEY`, `VPN_PUBLIC_KEY` — only if you're using the
+  WireGuard step
 
 ## Step 6: Open a test PR
 
@@ -186,6 +207,9 @@ environments against open PRs once a day and tears down orphans. See
   HTTP-01 challenges, the cookie-domain footgun.
 - [`docs/secrets.md`](secrets.md) — Kamal's `kamal secrets` integration
   with 1Password, AWS Secrets Manager, Doppler, and friends.
+- [`docs/resource-limits.md`](resource-limits.md) — keep preview costs
+  in check via memory/CPU caps, branch filtering, and a hard cap on
+  concurrent previews.
 - [`docs/troubleshooting.md`](troubleshooting.md) — common failure modes
   and how to diagnose them.
 - [`docs/reference.md`](reference.md) — every input, output, and secret.

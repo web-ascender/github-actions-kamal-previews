@@ -44,6 +44,8 @@ module FeatureDeploys
     # @param env_secret_overrides [Array<String>] extra entries appended to env.secret
     # @param deploy_timeout [Integer, nil] override `deploy_timeout`
     # @param builder_context [String, nil] override `builder.context` (e.g., "." to allow uncommitted code)
+    # @param memory_limit [String, nil] passes `--memory <value>` to docker run for every server role (e.g. "256m", "1g"). Bounds preview RAM until kamal-proxy ships scale-to-zero.
+    # @param cpu_limit [String, nil] passes `--cpus <value>` to docker run for every server role (e.g. "0.5", "1").
     def initialize(
       namer_result:,
       base_deploy_file:,
@@ -59,7 +61,9 @@ module FeatureDeploys
       env_overrides: {},
       env_secret_overrides: [],
       deploy_timeout: nil,
-      builder_context: nil
+      builder_context: nil,
+      memory_limit: nil,
+      cpu_limit: nil
     )
       @namer_result = namer_result
       @base_deploy_file = base_deploy_file
@@ -76,6 +80,8 @@ module FeatureDeploys
       @env_secret_overrides = env_secret_overrides || []
       @deploy_timeout = deploy_timeout
       @builder_context = builder_context
+      @memory_limit = memory_limit
+      @cpu_limit = cpu_limit
     end
 
     def call
@@ -193,7 +199,26 @@ module FeatureDeploys
         out["builder"]["context"] = @builder_context
       end
 
+      apply_resource_limits!(out) if @memory_limit || @cpu_limit
+
       out
+    end
+
+    # Per-role `options` map that Kamal renders into `docker run` flags.
+    # Each role under `servers:` may be in shorthand-array form (just hosts)
+    # or full-hash form (`hosts:`, `options:`, `cmd:`, …) — handle both.
+    def apply_resource_limits!(yaml)
+      return unless yaml["servers"].is_a?(Hash)
+
+      yaml["servers"].each_key do |role|
+        role_config = yaml["servers"][role]
+        if role_config.is_a?(Array)
+          yaml["servers"][role] = {"hosts" => role_config}
+        end
+        yaml["servers"][role]["options"] ||= {}
+        yaml["servers"][role]["options"]["memory"] = @memory_limit if @memory_limit
+        yaml["servers"][role]["options"]["cpus"] = @cpu_limit if @cpu_limit
+      end
     end
 
     def copy_secrets(destination)

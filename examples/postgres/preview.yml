@@ -1,8 +1,15 @@
-# Drop this file into your Rails app at .github/workflows/preview.yml
+# Drop this file into your Rails app at .github/workflows/preview.yml.
 #
-# Adjust the `with:` block to match your app and infrastructure. The
-# repo-level secrets that need to be set are listed in `secrets:` below —
-# `secrets: inherit` passes them through automatically.
+# Composite-action form: a single job, single steps stack. The WireGuard
+# tunnel (if your deploy host is private) is a sibling step that runs
+# before feature-deploys — they're independent concerns and compose
+# naturally.
+#
+# Repo-level GitHub Actions secrets the workflow expects:
+#   DEPLOY_SSH_KEY    — SSH key for the deploy host (Kamal's key).
+#   PG_HOST/USER/PASSWORD — DB admin creds (CREATEDB privilege).
+#   VPN_PRIVATE_KEY/VPN_PUBLIC_KEY — WireGuard credentials (only if your
+#                        deploy host is on a private network).
 
 name: Preview environment
 
@@ -18,39 +25,57 @@ permissions:
   deployments: write       # GitHub Deployments API
   id-token: write          # OIDC, optional
 
+# Concurrency keyed per-PR so multiple pushes don't deploy in parallel.
+# cancel-in-progress: true on deploys (latest push wins).
+concurrency:
+  group: feature-deploys-${{ github.event.pull_request.number || github.event.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+
 jobs:
   preview:
-    uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1
-    with:
-      base-deploy-file:        config/deploy.staging.yml
-      base-secrets-file:       .kamal/secrets.staging
-      domain-suffix:           preview.example.com
-      deploy-host:             staging.example.com
-      database-engine:         postgres
-      database-template:       myapp_staging
-      database-name-pattern:   "myapp_{db_slug}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
 
-      # Optional: pin the per-PR image tag to the head commit SHA so two
-      # deploys of the same branch don't accidentally cache the same image.
-      image-tag: ${{ github.event.pull_request.head.sha }}
+      # Optional: open a WireGuard tunnel if your deploy host is private.
+      # Remove this step if your deploy host is publicly addressable.
+      - name: Set up WireGuard VPN
+        uses: <your-vpn-action>@v1
+        with:
+          private-key:    ${{ secrets.VPN_PRIVATE_KEY }}
+          public-key:     ${{ secrets.VPN_PUBLIC_KEY }}
+          interface-ip:   "10.1.1.100/24"
+          endpoint:       "vpn.example.com:51820"
+          routes:         '["203.0.113.42"]'
 
-      # Optional: per-PR env overrides written to env.clear of the generated
-      # deploy file. Multi-line values are split on newlines.
-      env-overrides: |
-        ROLLBAR_ENV=preview
-        ANALYTICS_DISABLED=true
+      - name: Deploy / teardown preview
+        uses: web-ascender/feature-deploys@v1
+        with:
+          base-deploy-file:        config/deploy.staging.yml
+          base-secrets-file:       .kamal/secrets.staging
+          domain-suffix:           preview.example.com
+          deploy-host:             staging.example.com
+          database-engine:         postgres
+          database-template:       myapp_staging
+          database-name-pattern:   "myapp_{db_slug}"
 
-    secrets:
-      # Required: SSH key for the deploy host (must be the same key Kamal
-      # uses, so add it as a single repo-level secret).
-      SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Optional: tag the per-PR image with the head SHA.
+          image-tag: ${{ github.event.pull_request.head.sha }}
 
-      # Required for Postgres: database admin credentials. Must be able to
-      # CREATEDB and connect to the maintenance database.
-      PG_HOST:     ${{ secrets.PG_HOST }}
-      PG_USER:     ${{ secrets.PG_USER }}
-      PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+          # Optional: cap each preview's resource use.
+          memory-limit: "512m"
+          cpu-limit:    "0.5"
 
-      # Optional Postgres knobs.
-      PG_PORT:     ${{ secrets.PG_PORT }}
-      PG_SSLMODE:  ${{ secrets.PG_SSLMODE }}
+          # Optional: only deploy previews for branches matching this glob.
+          # branch-pattern: "feature/**"
+
+        env:
+          # Composite actions can't read `secrets.X` directly — forward the
+          # ones we need via `env:`. Keep these tightly scoped to this step.
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          PG_HOST:         ${{ secrets.PG_HOST }}
+          PG_USER:         ${{ secrets.PG_USER }}
+          PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
+          PG_PORT:         ${{ secrets.PG_PORT }}
+          PG_SSLMODE:      ${{ secrets.PG_SSLMODE }}

@@ -1,6 +1,8 @@
-# Optional: run a daily sweep that tears down any preview environments
-# whose PR was closed (or branch deleted) while feature-deploys' webhook
-# triggers were unavailable. Drop into .github/workflows/preview-sweep.yml.
+# Optional: daily sweep that tears down preview environments whose
+# `pull_request: closed` or `delete` event was missed (GitHub Actions
+# outage, branch deleted while Actions was disabled, etc.).
+#
+# Drop into .github/workflows/preview-sweep.yml.
 
 name: Preview sweep
 
@@ -10,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       dry-run:
-        description: When `true`, log orphans without actually tearing them down.
+        description: When `true`, log orphans without acting.
         type: boolean
         default: false
 
@@ -21,19 +23,32 @@ permissions:
 
 jobs:
   sweep:
-    uses: web-ascender/github-actions-kamal-previews/.github/workflows/sweep.yml@v1
-    with:
-      base-deploy-file:      config/deploy.staging.yml
-      domain-suffix:         preview.example.com
-      deploy-host:           staging.example.com
-      database-engine:       postgres
-      database-template:     myapp_staging
-      database-name-pattern: "myapp_{db_slug}"
-      dry-run:               ${{ inputs.dry-run && 'true' || 'false' }}
-    secrets:
-      SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-      PG_HOST:         ${{ secrets.PG_HOST }}
-      PG_USER:         ${{ secrets.PG_USER }}
-      PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
-      PG_PORT:         ${{ secrets.PG_PORT }}
-      PG_SSLMODE:      ${{ secrets.PG_SSLMODE }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Optional: WireGuard tunnel if your deploy host is private.
+      - uses: <your-vpn-action>@v1
+        with:
+          private-key: ${{ secrets.VPN_PRIVATE_KEY }}
+          public-key:  ${{ secrets.VPN_PUBLIC_KEY }}
+          interface-ip: "10.1.1.100/24"
+          endpoint:    "vpn.example.com:51820"
+          routes:      '["203.0.113.42"]'
+
+      - uses: web-ascender/feature-deploys/sweep@v1
+        with:
+          base-deploy-file:      config/deploy.staging.yml
+          domain-suffix:         preview.example.com
+          deploy-host:           staging.example.com
+          database-engine:       postgres
+          database-template:     myapp_staging
+          database-name-pattern: "myapp_{db_slug}"
+          dry-run:               ${{ inputs.dry-run && 'true' || 'false' }}
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          PG_HOST:         ${{ secrets.PG_HOST }}
+          PG_USER:         ${{ secrets.PG_USER }}
+          PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
+          PG_PORT:         ${{ secrets.PG_PORT }}
+          PG_SSLMODE:      ${{ secrets.PG_SSLMODE }}

@@ -6,7 +6,7 @@ Actions primitives:
 ```
                      ┌─────────────────────────────────────┐
    Consumer's repo ─►│  .github/workflows/preview.yml      │
-                     │  (calls web-ascender/github-actions-kamal-previews │
+                     │  (calls web-ascender/feature-deploys │
                      │   reusable workflow with `uses:`)   │
                      └─────────────────┬───────────────────┘
                                        │

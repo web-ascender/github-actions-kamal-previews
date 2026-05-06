@@ -5,7 +5,7 @@ top-level composite actions.
 
 ## Reusable workflow inputs
 
-`web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1`
+`web-ascender/feature-deploys/.github/workflows/preview.yml@v1`
 
 ### Required
 
@@ -41,6 +41,10 @@ top-level composite actions.
 | `builder-context`       | `""`        | Override `builder.context` (e.g. `.` to allow uncommitted code). |
 | `prefix-strip`          | `feature/,feat/,fix/,bug/,bugfix/,chore/,hotfix/,release/` | Prefixes to strip from branch names before slug generation. |
 | `image-tag`             | `""`        | Override the image tag. Pass the head SHA for cache-friendly tagging. |
+| `memory-limit`          | `""`        | Per-PR Docker `--memory` cap (e.g. `256m`, `1g`). Applied to every server role. See [`resource-limits.md`](resource-limits.md). |
+| `cpu-limit`             | `""`        | Per-PR Docker `--cpus` cap (e.g. `0.5`). Applied to every server role. |
+| `branch-pattern`        | `""`        | Bash-glob pattern; only branches matching it get previews. Empty = every PR. |
+| `max-active-previews`   | `0`         | Hard cap on concurrent active previews. 0 = unlimited. |
 
 ### Runner / Kamal
 
@@ -79,7 +83,7 @@ auto-pass through.
 
 ## Sweep workflow inputs
 
-`web-ascender/github-actions-kamal-previews/.github/workflows/sweep.yml@v1`
+`web-ascender/feature-deploys/.github/workflows/sweep.yml@v1`
 
 Same shape as the preview workflow, plus:
 

@@ -62,6 +62,23 @@ on:
       builder-context:         { type: string, default: "" }
       prefix-strip:            { type: string, default: "feature/,feat/,fix/,bug/,bugfix/,chore/,hotfix/,release/" }
       image-tag:               { type: string, default: "" }
+      memory-limit:            { type: string, default: "" }
+      cpu-limit:               { type: string, default: "" }
+      branch-pattern:
+        description: |
+          Optional bash-glob pattern that the source branch name must match
+          to trigger a preview. Empty (default) = every PR gets a preview.
+          Examples: "feature/**", "@(feature|fix)/*", "release-*".
+        type: string
+        default: ""
+      max-active-previews:
+        description: |
+          Maximum number of active preview environments allowed. The deploy
+          step refuses to start a NEW preview when this many are already
+          active (an existing preview being re-deployed doesn't count
+          against the cap). 0 (default) = unlimited.
+        type: number
+        default: 0
       ruby-version:            { type: string, default: "3.3" }
       kamal-version:           { type: string, default: "" }
       ssh-user:                { type: string, default: deploy }
@@ -96,8 +113,41 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
 
 jobs:
-  deploy:
+  # Cheap gating job: checks `branch-pattern` against the source branch.
+  # If empty pattern, always passes. Only the `deploy` job consults this —
+  # teardowns must run regardless of the pattern (otherwise enabling a
+  # pattern later would orphan previously-deployed previews).
+  eligibility:
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    outputs:
+      match: ${{ steps.filter.outputs.match }}
+    steps:
+      - id: filter
+        env:
+          BRANCH: ${{ github.head_ref || github.event.pull_request.head.ref }}
+          PATTERN: ${{ inputs.branch-pattern }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PATTERN" ]; then
+            echo "match=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          shopt -s extglob
+          # shellcheck disable=SC2053
+          if [[ "$BRANCH" == $PATTERN ]]; then
+            echo "::notice::Branch '$BRANCH' matches preview pattern '$PATTERN'."
+            echo "match=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Branch '$BRANCH' does not match preview pattern '$PATTERN' — skipping."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: eligibility
+    if: |
+      github.event_name == 'pull_request' && github.event.action != 'closed' &&
+      needs.eligibility.outputs.match == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -153,7 +203,56 @@ jobs:
           env-secret-overrides: ${{ inputs.env-secret-overrides }}
           deploy-timeout: ${{ inputs.deploy-timeout }}
           builder-context: ${{ inputs.builder-context }}
+          memory-limit: ${{ inputs.memory-limit }}
+          cpu-limit: ${{ inputs.cpu-limit }}
           prefix-strip: ${{ inputs.prefix-strip }}
+
+      - name: Enforce max-active-previews cap
+        if: inputs.max-active-previews > 0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MAX_ACTIVE: ${{ inputs.max-active-previews }}
+          MY_ENV: preview-${{ steps.config.outputs.slug }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # List every deployment whose latest status is not inactive/removed
+          # for environments matching `preview-*`. We exclude our OWN env so a
+          # re-deploy of an existing preview never gets blocked by the cap.
+          mapfile -t active_envs < <(
+            gh api -H 'Accept: application/vnd.github+json' \
+              "/repos/$GH_REPO/environments" --paginate \
+              --jq '.environments[]?.name // .[]?.name' \
+              | grep -E '^preview-' || true
+          )
+          active_count=0
+          for env in "${active_envs[@]}"; do
+            [ "$env" = "$MY_ENV" ] && continue
+            deployment_id="$(gh api -H 'Accept: application/vnd.github+json' \
+              "/repos/$GH_REPO/deployments?environment=${env}&per_page=1" \
+              --jq '.[0].id // empty' || true)"
+            [ -z "$deployment_id" ] && continue
+            latest_state="$(gh api -H 'Accept: application/vnd.github+json' \
+              "/repos/$GH_REPO/deployments/${deployment_id}/statuses?per_page=1" \
+              --jq '.[0].state // empty' || true)"
+            case "$latest_state" in
+              ""|inactive|removed|failure|error) ;;   # not active, doesn't count
+              *) active_count=$((active_count + 1)) ;;
+            esac
+          done
+
+          echo "Active preview environments (excluding this one): $active_count / $MAX_ACTIVE cap"
+          if [ "$active_count" -ge "$MAX_ACTIVE" ]; then
+            msg="🚦 **Preview cap reached.** ${active_count} active preview environments are already running, which meets the cap of \`max-active-previews=${MAX_ACTIVE}\`. Close another preview PR (or wait for it to be torn down) and re-run this workflow."
+            if [ -n "${PR_NUMBER:-}" ]; then
+              gh api --method POST "/repos/$GH_REPO/issues/${PR_NUMBER}/comments" \
+                -f body="<!-- feature-deploys:status -->
+$msg" >/dev/null || true
+            fi
+            echo "::error::$msg"
+            exit 1
+          fi
 
       - id: sqlite_path
         if: inputs.database-engine == 'sqlite'

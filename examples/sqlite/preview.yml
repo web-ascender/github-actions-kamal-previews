@@ -1,18 +1,11 @@
 # SQLite preview-environment workflow.
 #
-# SQLite is the lightest of the three engines. There's no separate database
-# server: the staging database is a file on the deploy host, typically inside
-# a Docker volume that the staging Kamal app mounts. feature-deploys clones
-# that file into a sibling per-PR file and the per-PR Kamal app mounts the
-# new file.
-#
 # Prerequisites:
 #   * Your staging app's deploy.yml mounts a host directory (e.g.
 #     /var/lib/myapp/storage) into the container; that directory contains
 #     the SQLite file (e.g. /var/lib/myapp/storage/staging.sqlite3).
-#   * Your per-PR deploy.yml (which feature-deploys generates) needs to
-#     mount the SAME directory and point Rails at the per-PR filename via
-#     env (typically by templating DATABASE_URL or Rails' database.yml).
+#   * Your per-PR app must mount the SAME directory so it can read the
+#     cloned file.
 #   * `sqlite3` is installed on the deploy host: `apt install sqlite3`.
 
 name: Preview environment
@@ -28,29 +21,33 @@ permissions:
   pull-requests: write
   deployments: write
 
+concurrency:
+  group: feature-deploys-${{ github.event.pull_request.number || github.event.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+
 jobs:
   preview:
-    uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1
-    with:
-      base-deploy-file:           config/deploy.staging.yml
-      base-secrets-file:          .kamal/secrets.staging
-      domain-suffix:              preview.example.com
-      deploy-host:                staging.example.com
-      database-engine:            sqlite
-      sqlite-source-path:         /var/lib/myapp/storage/staging.sqlite3
-      sqlite-target-path-pattern: /var/lib/myapp/storage/preview-{slug}.sqlite3
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
 
-      # If your app uses solid_queue / solid_cache / solid_cable backed by
-      # SQLite, list their suffixes here and feature-deploys will clone them
-      # alongside the primary database. Suffix is appended to the basename:
-      # `staging.sqlite3` + `_queue` → `staging_queue.sqlite3`.
-      sqlite-also-clone: "_queue _cache _cable"
+      - uses: web-ascender/feature-deploys@v1
+        with:
+          base-deploy-file:           config/deploy.staging.yml
+          base-secrets-file:          .kamal/secrets.staging
+          domain-suffix:              preview.example.com
+          deploy-host:                staging.example.com
+          database-engine:            sqlite
+          sqlite-source-path:         /var/lib/myapp/storage/staging.sqlite3
+          sqlite-target-path-pattern: /var/lib/myapp/storage/preview-{slug}.sqlite3
 
-      # Tell the per-PR Kamal app where to find its files. Your config
-      # generator gets these via env.clear automatically (FEATURE_BRANCH_SLUG,
-      # FEATURE_BRANCH_DB_SLUG); inject DATABASE_URL accordingly.
-      env-overrides: |
-        DATABASE_URL=sqlite3:///app/storage/preview-{{slug}}.sqlite3
+          # If your app uses Solid Queue / Cache / Cable backed by SQLite,
+          # list their suffixes here so they're cloned alongside the primary.
+          sqlite-also-clone: "_queue _cache _cable"
 
-    secrets:
-      SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Tell the per-PR app where its DB lives.
+          env-overrides: |
+            DATABASE_URL=sqlite3:///app/storage/preview-{{slug}}.sqlite3
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}

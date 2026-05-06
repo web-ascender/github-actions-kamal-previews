@@ -65,6 +65,14 @@ inputs:
     description: Override `builder.context` (e.g. `.` to allow uncommitted code).
     required: false
     default: ""
+  memory-limit:
+    description: Per-PR Docker --memory cap (e.g. "256m", "1g") applied to every server role. Useful to bound preview RAM until kamal-proxy ships scale-to-zero.
+    required: false
+    default: ""
+  cpu-limit:
+    description: Per-PR Docker --cpus cap (e.g. "0.5") applied to every server role.
+    required: false
+    default: ""
   prefix-strip:
     description: Comma-separated branch prefixes to strip before slug generation.
     required: false
@@ -132,6 +140,8 @@ runs:
         GH_ENV_SECRET_OVERRIDES: ${{ inputs.env-secret-overrides }}
         GH_DEPLOY_TIMEOUT: ${{ inputs.deploy-timeout }}
         GH_BUILDER_CONTEXT: ${{ inputs.builder-context }}
+        GH_MEMORY_LIMIT: ${{ inputs.memory-limit }}
+        GH_CPU_LIMIT: ${{ inputs.cpu-limit }}
         GH_PREFIX_STRIP: ${{ inputs.prefix-strip }}
       run: |
         set -euo pipefail
@@ -163,6 +173,12 @@ runs:
         fi
         if [ -n "$GH_BUILDER_CONTEXT" ]; then
           cmd+=(--builder-context "$GH_BUILDER_CONTEXT")
+        fi
+        if [ -n "$GH_MEMORY_LIMIT" ]; then
+          cmd+=(--memory-limit "$GH_MEMORY_LIMIT")
+        fi
+        if [ -n "$GH_CPU_LIMIT" ]; then
+          cmd+=(--cpu-limit "$GH_CPU_LIMIT")
         fi
 
         # Multiple --env-override flags

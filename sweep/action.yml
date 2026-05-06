@@ -1,0 +1,277 @@
+name: feature-deploys / sweep
+description: |
+  Reconciles registered preview environments against open pull requests
+  and tears down orphans (closed / deleted PRs whose teardown event was
+  missed). Designed to run from a scheduled (cron) workflow.
+
+  Usage:
+
+      on:
+        schedule:
+          - cron: "0 6 * * *"
+      jobs:
+        sweep:
+          runs-on: ubuntu-latest
+          permissions:
+            contents: read
+            pull-requests: read
+            deployments: write
+          steps:
+            - uses: actions/checkout@v4
+            # Optional: VPN, if your deploy host is private.
+            - uses: <your-vpn-action>@v1
+              with: { private-key: ..., public-key: ..., endpoint: ..., interface-ip: ..., routes: ... }
+            - uses: web-ascender/feature-deploys/sweep@v1
+              with:
+                base-deploy-file: config/deploy.staging.yml
+                domain-suffix:    preview.example.com
+                deploy-host:      staging.example.com
+                database-engine:  postgres
+                database-template: myapp_staging
+                database-name-pattern: "myapp_{db_slug}"
+              env:
+                SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+                PG_HOST:         ${{ secrets.PG_HOST }}
+                PG_USER:         ${{ secrets.PG_USER }}
+                PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
+
+  Orphans are processed sequentially — for a handful of stale previews per
+  day, this is fine. Adopters who genuinely need parallel cleanup of many
+  orphans should use the reusable-workflow form
+  (`web-ascender/feature-deploys/.github/workflows/sweep.yml@v1`), which
+  uses a matrix to fan out.
+
+inputs:
+  base-deploy-file:           { required: true }
+  domain-suffix:              { required: true }
+  deploy-host:                { required: true }
+  database-engine:            { required: false, default: none }
+  database-template:          { required: false, default: "" }
+  database-name-pattern:      { required: false, default: "" }
+  sqlite-target-path-pattern: { required: false, default: "" }
+  sqlite-also-clone:          { required: false, default: "" }
+  base-secrets-file:          { required: false, default: "" }
+  domain-label-pattern:       { required: false, default: "{slug}" }
+  service-pattern:            { required: false, default: "{base_service}-{slug}" }
+  destination-pattern:        { required: false, default: "{slug}" }
+  env-label:                  { required: false, default: preview }
+  prefix-strip:               { required: false, default: "feature/,feat/,fix/,bug/,bugfix/,chore/,hotfix/,release/" }
+  ruby-version:               { required: false, default: "3.3" }
+  kamal-version:              { required: false, default: "" }
+  ssh-user:                   { required: false, default: deploy }
+  ssh-port:                   { required: false, default: "22" }
+  environment-prefix:         { required: false, default: "preview-" }
+  dry-run:                    { required: false, default: "false" }
+
+runs:
+  using: composite
+  steps:
+    - id: fd_meta
+      shell: bash
+      env:
+        ACTION_REPO: ${{ github.action_repository }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        repo="${ACTION_REPO:-web-ascender/feature-deploys}"
+        ref="${ACTION_REF:-main}"
+        echo "repo=$repo" >> "$GITHUB_OUTPUT"
+        echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/checkout@v4
+      with:
+        repository: ${{ steps.fd_meta.outputs.repo }}
+        ref: ${{ steps.fd_meta.outputs.ref }}
+        path: .feature-deploys
+
+    - uses: ./.feature-deploys/.github/actions/setup
+      with:
+        ruby-version: ${{ inputs.ruby-version }}
+        kamal-version: ${{ inputs.kamal-version }}
+        ssh-private-key: ${{ env.SSH_PRIVATE_KEY }}
+        setup-buildx: "false"
+        setup-gha-cache: "false"
+
+    - id: identify
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        ENV_PREFIX: ${{ inputs.environment-prefix }}
+        PREFIX_STRIP: ${{ inputs.prefix-strip }}
+      run: |
+        set -euo pipefail
+        mapfile -t open_branches < <(gh pr list --repo "$GH_REPO" --state open --json headRefName --jq '.[].headRefName')
+        mapfile -t envs < <(
+          gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GH_REPO/environments" --paginate \
+            --jq '.environments[]?.name // .[]?.name' \
+            | grep -E "^${ENV_PREFIX}" || true
+        )
+
+        # Build a regex of prefixes to strip (matching feature-deploys' Namer).
+        prefix_re="$(echo "$PREFIX_STRIP" | tr ',' '|' | sed 's:/$::; s:/|:|:g; s:/$::')"
+        slugify() {
+          echo "$1" | tr '[:upper:]' '[:lower:]' \
+            | sed -E "s|^(${prefix_re})/||" \
+            | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+        }
+
+        orphans=()
+        for env in "${envs[@]}"; do
+          deployment_id="$(gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GH_REPO/deployments?environment=${env}&per_page=1" \
+            --jq '.[0].id // empty' || true)"
+          [ -z "$deployment_id" ] && continue
+          state="$(gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GH_REPO/deployments/${deployment_id}/statuses?per_page=1" \
+            --jq '.[0].state // empty' || true)"
+          case "$state" in
+            ""|inactive|removed|failure|error) continue ;;
+          esac
+
+          slug="${env#${ENV_PREFIX}}"
+          matched=0
+          for branch in "${open_branches[@]}"; do
+            if [ "$(slugify "$branch")" = "$slug" ]; then matched=1; break; fi
+          done
+          if [ "$matched" = "0" ]; then
+            echo "::notice::Orphan: $env (slug=$slug)"
+            orphans+=("$slug")
+          fi
+        done
+
+        if [ ${#orphans[@]} -eq 0 ]; then
+          echo "No orphans found."
+          echo "orphan_count=0" >> "$GITHUB_OUTPUT"
+        else
+          printf '%s\n' "${orphans[@]}" > orphans.txt
+          echo "orphan_count=${#orphans[@]}" >> "$GITHUB_OUTPUT"
+        fi
+
+    - id: teardown
+      if: steps.identify.outputs.orphan_count != '0'
+      shell: bash
+      env:
+        DRY_RUN: ${{ inputs.dry-run }}
+        BASE_DEPLOY_FILE:           ${{ inputs.base-deploy-file }}
+        BASE_SECRETS_FILE:          ${{ inputs.base-secrets-file }}
+        DOMAIN_SUFFIX:              ${{ inputs.domain-suffix }}
+        DOMAIN_LABEL_PATTERN:       ${{ inputs.domain-label-pattern }}
+        SERVICE_PATTERN:            ${{ inputs.service-pattern }}
+        DESTINATION_PATTERN:        ${{ inputs.destination-pattern }}
+        DATABASE_NAME_PATTERN:      ${{ inputs.database-name-pattern }}
+        BASE_DATABASE:              ${{ inputs.database-template }}
+        ENV_LABEL:                  ${{ inputs.env-label }}
+        PREFIX_STRIP:               ${{ inputs.prefix-strip }}
+        DATABASE_ENGINE:            ${{ inputs.database-engine }}
+        DEPLOY_HOST:                ${{ inputs.deploy-host }}
+        SSH_USER:                   ${{ inputs.ssh-user }}
+        SSH_PORT:                   ${{ inputs.ssh-port }}
+        SQLITE_PATTERN:             ${{ inputs.sqlite-target-path-pattern }}
+        SQLITE_ALSO:                ${{ inputs.sqlite-also-clone }}
+        ENV_PREFIX:                 ${{ inputs.environment-prefix }}
+      run: |
+        set -euo pipefail
+        if [ "$DRY_RUN" = "true" ]; then
+          echo "::notice::DRY RUN — these orphans would be torn down:"
+          cat orphans.txt
+          exit 0
+        fi
+        # We have to re-implement teardown inline here because composite
+        # actions can't loop with `uses:` calls per iteration. For each
+        # orphan slug, generate the destination, then call kamal app
+        # remove + drop the database via the same scripts the main flow
+        # uses (sourced from .feature-deploys/scripts/<engine>/).
+        while IFS= read -r slug; do
+          echo "::group::Teardown for slug=$slug"
+
+          gen_args=(
+            generate
+            --branch "$slug"
+            --base-deploy-file "$BASE_DEPLOY_FILE"
+            --domain-suffix "$DOMAIN_SUFFIX"
+            --domain-label-pattern "$DOMAIN_LABEL_PATTERN"
+            --service-pattern "$SERVICE_PATTERN"
+            --destination-pattern "$DESTINATION_PATTERN"
+            --env-label "$ENV_LABEL"
+            --prefix-strip "$PREFIX_STRIP"
+          )
+          [ -n "$BASE_SECRETS_FILE" ]      && gen_args+=(--base-secrets-file "$BASE_SECRETS_FILE")
+          [ -n "$DATABASE_NAME_PATTERN" ]  && gen_args+=(--database-name-pattern "$DATABASE_NAME_PATTERN")
+          [ -n "$BASE_DATABASE" ]          && gen_args+=(--base-database "$BASE_DATABASE")
+
+          summary="$(.feature-deploys/bin/feature-deploys "${gen_args[@]}")"
+          dest="$(echo "$summary" | jq -r '.destination')"
+          db_name="$(echo "$summary" | jq -r '.database_name // empty')"
+          db_slug="$(echo "$summary" | jq -r '.db_slug')"
+
+          # kamal app remove
+          kamal lock release -d "$dest" || true
+          if ! kamal app remove -d "$dest" -y; then
+            echo "::warning::kamal app remove -d $dest exited non-zero — assuming already gone."
+          fi
+
+          # drop database (if applicable)
+          if [ "$DATABASE_ENGINE" != "none" ]; then
+            scripts_dir="$(pwd)/.feature-deploys/scripts"
+            ssh_target="${SSH_USER}@${DEPLOY_HOST}"
+            ssh_opts=(-o StrictHostKeyChecking=accept-new -p "$SSH_PORT")
+            scp_opts=(-o StrictHostKeyChecking=accept-new -P "$SSH_PORT")
+            remote="$(ssh "${ssh_opts[@]}" "$ssh_target" 'mktemp -d')"
+            scp "${scp_opts[@]}" -r "$scripts_dir/lib" "$ssh_target:$remote/"
+            scp "${scp_opts[@]}" -r "$scripts_dir/$DATABASE_ENGINE" "$ssh_target:$remote/"
+
+            envfile="$(mktemp)"
+            case "$DATABASE_ENGINE" in
+              postgres)
+                {
+                  printf 'PGHOST=%s\nPGPORT=%s\nPGUSER=%s\nPGPASSWORD=%s\n' \
+                    "${PG_HOST:-}" "${PG_PORT:-5432}" "${PG_USER:-}" "${PG_PASSWORD:-}"
+                  [ -n "${PG_SSLMODE:-}" ] && printf 'PGSSLMODE=%s\n' "$PG_SSLMODE"
+                  printf 'TARGET_DATABASE=%s\n' "$db_name"
+                } > "$envfile"
+                scp "${scp_opts[@]}" "$envfile" "$ssh_target:$remote/.env"
+                rm -f "$envfile"
+                ssh "${ssh_opts[@]}" "$ssh_target" \
+                  "docker run --rm --env-file '$remote/.env' --network host -v '$remote:/work:ro' postgres:16-alpine bash /work/postgres/drop.sh"
+                ;;
+              mysql)
+                {
+                  printf 'MYSQL_HOST=%s\nMYSQL_PORT=%s\nMYSQL_USER=%s\nMYSQL_PASSWORD=%s\n' \
+                    "${MYSQL_HOST:-}" "${MYSQL_PORT:-3306}" "${MYSQL_USER:-}" "${MYSQL_PASSWORD:-}"
+                  [ -n "${MYSQL_SSL_MODE:-}" ] && printf 'MYSQL_SSL_MODE=%s\n' "$MYSQL_SSL_MODE"
+                  printf 'TARGET_DATABASE=%s\n' "$db_name"
+                } > "$envfile"
+                scp "${scp_opts[@]}" "$envfile" "$ssh_target:$remote/.env"
+                rm -f "$envfile"
+                ssh "${ssh_opts[@]}" "$ssh_target" \
+                  "docker run --rm --env-file '$remote/.env' --network host -v '$remote:/work:ro' mysql:8.4 bash /work/mysql/drop.sh"
+                ;;
+              sqlite)
+                resolved="${SQLITE_PATTERN//\{slug\}/$slug}"
+                resolved="${resolved//\{db_slug\}/$db_slug}"
+                {
+                  printf 'TARGET_PATH=%s\n' "$resolved"
+                  [ -n "${SQLITE_ALSO:-}" ] && printf 'ALSO_DROP=%s\n' "$SQLITE_ALSO"
+                } > "$envfile"
+                scp "${scp_opts[@]}" "$envfile" "$ssh_target:$remote/.env"
+                rm -f "$envfile"
+                ssh "${ssh_opts[@]}" "$ssh_target" \
+                  "set -a && . '$remote/.env' && set +a && bash '$remote/sqlite/drop.sh'"
+                ;;
+            esac
+            ssh "${ssh_opts[@]}" "$ssh_target" "rm -rf '$remote'" || true
+          fi
+
+          # mark deployment inactive
+          deployment_id="$(gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/deployments?environment=${ENV_PREFIX}${slug}&per_page=1" \
+            --jq '.[0].id // empty' || true)"
+          if [ -n "$deployment_id" ]; then
+            gh api --method POST \
+              "/repos/$GITHUB_REPOSITORY/deployments/${deployment_id}/statuses" \
+              -f state=inactive -f description="Reaped by sweep" >/dev/null || true
+          fi
+
+          echo "::endgroup::"
+        done < orphans.txt

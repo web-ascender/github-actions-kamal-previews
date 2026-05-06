@@ -1,0 +1,348 @@
+name: feature-deploys
+description: |
+  Preview environments for Kamal-deployed Rails apps. Open a pull request,
+  get a per-PR Kamal app at a unique URL with a freshly cloned staging
+  database. Close the PR, everything tears down.
+
+  Single-step entry point — drop one step into a single-job workflow:
+
+      jobs:
+        preview:
+          runs-on: ubuntu-latest
+          permissions:
+            contents: read
+            packages: write
+            pull-requests: write
+            deployments: write
+          steps:
+            - uses: actions/checkout@v4
+
+            # Optional: open a WireGuard tunnel before this action runs,
+            # so SSH to a private deploy host works.
+            - uses: <your-vpn-action>@v1
+              with: { private-key: ..., public-key: ..., endpoint: ..., interface-ip: ..., routes: ... }
+
+            - uses: web-ascender/feature-deploys@v1
+              with:
+                base-deploy-file: config/deploy.staging.yml
+                domain-suffix:    preview.example.com
+                deploy-host:      staging.example.com
+                ...
+              env:
+                SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+                PG_HOST:         ${{ secrets.PG_HOST }}
+                PG_USER:         ${{ secrets.PG_USER }}
+                PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
+
+  Internally dispatches based on the triggering event:
+    - pull_request opened/synchronize/reopened   → deploy
+    - pull_request closed                        → teardown
+    - delete (branch)                            → teardown
+    - anything else                              → skip (with notice)
+
+  WireGuard / VPN setup is intentionally NOT in this action — pair it with
+  any VPN action you already trust (e.g. `<your-vpn-action>`)
+  as a sibling step. Tunnels established in earlier steps remain active for
+  the subsequent `feature-deploys` step in the same job.
+
+  For multi-job concurrency control, branch-pattern filtering, or the
+  max-active-previews cap, prefer the reusable workflow at
+  `web-ascender/feature-deploys/.github/workflows/preview.yml@v1` (which
+  does have integrated VPN inputs because reusable workflows can't compose
+  with sibling steps the way actions can).
+
+inputs:
+  base-deploy-file:           { required: true }
+  domain-suffix:              { required: true }
+  deploy-host:                { required: true }
+
+  database-engine:            { required: false, default: none }
+  database-template:          { required: false, default: "" }
+  database-name-pattern:      { required: false, default: "" }
+
+  sqlite-source-path:         { required: false, default: "" }
+  sqlite-target-path-pattern: { required: false, default: "" }
+  sqlite-also-clone:          { required: false, default: "" }
+
+  base-secrets-file:          { required: false, default: "" }
+  domain-label-pattern:       { required: false, default: "{slug}" }
+  service-pattern:            { required: false, default: "{base_service}-{slug}" }
+  destination-pattern:        { required: false, default: "{slug}" }
+  env-label:                  { required: false, default: preview }
+  env-overrides:              { required: false, default: "" }
+  env-secret-overrides:       { required: false, default: "" }
+  deploy-timeout:             { required: false, default: "" }
+  builder-context:            { required: false, default: "" }
+  prefix-strip:               { required: false, default: "feature/,feat/,fix/,bug/,bugfix/,chore/,hotfix/,release/" }
+  image-tag:                  { required: false, default: "" }
+  memory-limit:               { required: false, default: "" }
+  cpu-limit:                  { required: false, default: "" }
+  branch-pattern:
+    description: Bash-glob pattern; only branches matching it get previews. Empty = every PR. Teardowns ignore the pattern (they always run).
+    required: false
+    default: ""
+
+  ruby-version:               { required: false, default: "3.3" }
+  kamal-version:              { required: false, default: "" }
+  ssh-user:                   { required: false, default: deploy }
+  ssh-port:                   { required: false, default: "22" }
+
+outputs:
+  slug:          { value: ${{ steps.config.outputs.slug }} }
+  db_slug:       { value: ${{ steps.config.outputs.db_slug }} }
+  destination:   { value: ${{ steps.config.outputs.destination }} }
+  proxy_host:    { value: ${{ steps.config.outputs.proxy_host }} }
+  url:           { value: ${{ steps.config.outputs.url }} }
+  database_name: { value: ${{ steps.config.outputs.database_name }} }
+  mode:          { value: ${{ steps.dispatch.outputs.mode }} }
+
+runs:
+  using: composite
+  steps:
+    # ── Decide mode (deploy / teardown / skip) ────────────────────────────
+    - id: dispatch
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        EVENT_ACTION: ${{ github.event.action }}
+        EVENT_REF_TYPE: ${{ github.event.ref_type }}
+      run: |
+        set -euo pipefail
+        if [ "$EVENT_NAME" = "pull_request" ] && [ "$EVENT_ACTION" != "closed" ]; then
+          mode=deploy
+        elif [ "$EVENT_NAME" = "pull_request" ] && [ "$EVENT_ACTION" = "closed" ]; then
+          mode=teardown
+        elif [ "$EVENT_NAME" = "delete" ] && [ "$EVENT_REF_TYPE" = "branch" ]; then
+          mode=teardown
+        else
+          echo "::warning::feature-deploys can't infer a mode from event=$EVENT_NAME action=${EVENT_ACTION:-} ref_type=${EVENT_REF_TYPE:-}; skipping."
+          mode=skip
+        fi
+        echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+    # ── Branch-name resolution + pattern filter (deploys only) ────────────
+    - id: branch
+      if: steps.dispatch.outputs.mode != 'skip'
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        DELETED_REF: ${{ github.event.ref }}
+        PATTERN: ${{ inputs.branch-pattern }}
+        MODE: ${{ steps.dispatch.outputs.mode }}
+      run: |
+        set -euo pipefail
+        if [ "$EVENT_NAME" = "delete" ]; then
+          name="$DELETED_REF"
+        else
+          name="$PR_HEAD_REF"
+        fi
+        if [ -z "$name" ]; then
+          echo "::error::Could not resolve branch name from event payload."; exit 1
+        fi
+        echo "name=$name" >> "$GITHUB_OUTPUT"
+
+        # Branch-pattern filter only applies to deploys; teardowns must
+        # always proceed regardless (otherwise enabling a pattern later
+        # would orphan previously-deployed previews).
+        if [ "$MODE" = "deploy" ] && [ -n "$PATTERN" ]; then
+          shopt -s extglob
+          # shellcheck disable=SC2053
+          if [[ "$name" == $PATTERN ]]; then
+            echo "::notice::Branch '$name' matches preview pattern '$PATTERN'."
+            echo "match=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Branch '$name' does not match preview pattern '$PATTERN' — skipping."
+            echo "match=false" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          echo "match=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    # ── Self-checkout for sub-actions + scripts ───────────────────────────
+    - id: fd_meta
+      if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true'
+      shell: bash
+      env:
+        ACTION_REPO: ${{ github.action_repository }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        # When the action is run locally (e.g. by `act` or in CI on this
+        # very repo), action_repository is empty — fall back to a sane
+        # default so the self-checkout step still works.
+        repo="${ACTION_REPO:-web-ascender/feature-deploys}"
+        ref="${ACTION_REF:-main}"
+        echo "repo=$repo" >> "$GITHUB_OUTPUT"
+        echo "ref=$ref" >> "$GITHUB_OUTPUT"
+        echo "feature-deploys: repo=$repo ref=$ref"
+
+    - if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ steps.fd_meta.outputs.repo }}
+        ref: ${{ steps.fd_meta.outputs.ref }}
+        path: .feature-deploys
+
+    # ── Setup ─────────────────────────────────────────────────────────────
+    - if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true'
+      uses: ./.feature-deploys/.github/actions/setup
+      with:
+        ruby-version: ${{ inputs.ruby-version }}
+        kamal-version: ${{ inputs.kamal-version }}
+        ssh-private-key: ${{ env.SSH_PRIVATE_KEY }}
+        setup-buildx: ${{ steps.dispatch.outputs.mode == 'deploy' && 'true' || 'false' }}
+        setup-gha-cache: ${{ steps.dispatch.outputs.mode == 'deploy' && 'true' || 'false' }}
+        registry-username: ${{ env.REGISTRY_USERNAME }}
+        registry-password: ${{ env.REGISTRY_PASSWORD }}
+
+    # ── Generate per-PR Kamal config ──────────────────────────────────────
+    - id: config
+      if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true'
+      uses: ./.feature-deploys/.github/actions/generate-config
+      with:
+        branch-name: ${{ steps.branch.outputs.name }}
+        base-deploy-file: ${{ inputs.base-deploy-file }}
+        base-secrets-file: ${{ inputs.base-secrets-file }}
+        domain-suffix: ${{ inputs.domain-suffix }}
+        domain-label-pattern: ${{ inputs.domain-label-pattern }}
+        service-pattern: ${{ inputs.service-pattern }}
+        destination-pattern: ${{ inputs.destination-pattern }}
+        database-name-pattern: ${{ inputs.database-name-pattern }}
+        base-database: ${{ inputs.database-template }}
+        image-tag: ${{ inputs.image-tag }}
+        env-label: ${{ inputs.env-label }}
+        env-overrides: ${{ inputs.env-overrides }}
+        env-secret-overrides: ${{ inputs.env-secret-overrides }}
+        deploy-timeout: ${{ inputs.deploy-timeout }}
+        builder-context: ${{ inputs.builder-context }}
+        memory-limit: ${{ inputs.memory-limit }}
+        cpu-limit: ${{ inputs.cpu-limit }}
+        prefix-strip: ${{ inputs.prefix-strip }}
+
+    - id: sqlite_path
+      if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true' && inputs.database-engine == 'sqlite'
+      shell: bash
+      env:
+        PATTERN: ${{ inputs.sqlite-target-path-pattern }}
+        SLUG: ${{ steps.config.outputs.slug }}
+        DB_SLUG: ${{ steps.config.outputs.db_slug }}
+      run: |
+        set -euo pipefail
+        if [ -z "$PATTERN" ]; then
+          echo "::error::sqlite-target-path-pattern is required when database-engine=sqlite"; exit 1
+        fi
+        resolved="${PATTERN//\{slug\}/$SLUG}"
+        resolved="${resolved//\{db_slug\}/$DB_SLUG}"
+        echo "path=$resolved" >> "$GITHUB_OUTPUT"
+
+    # ── DEPLOY PATH ──────────────────────────────────────────────────────
+    - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true'
+      uses: ./.feature-deploys/.github/actions/deployment-status
+      with:
+        state: created
+        environment-name: preview-${{ steps.config.outputs.slug }}
+
+    - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true'
+      uses: ./.feature-deploys/.github/actions/pr-comment
+      with:
+        state: building
+        url: ${{ steps.config.outputs.url }}
+        destination: ${{ steps.config.outputs.destination }}
+        database-name: ${{ steps.config.outputs.database_name }}
+
+    - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && inputs.database-engine != 'none'
+      uses: ./.feature-deploys/.github/actions/clone-database
+      with:
+        engine: ${{ inputs.database-engine }}
+        host: ${{ inputs.deploy-host }}
+        ssh-user: ${{ inputs.ssh-user }}
+        ssh-port: ${{ inputs.ssh-port }}
+        pg-host: ${{ env.PG_HOST }}
+        pg-port: ${{ env.PG_PORT }}
+        pg-user: ${{ env.PG_USER }}
+        pg-password: ${{ env.PG_PASSWORD }}
+        pg-sslmode: ${{ env.PG_SSLMODE }}
+        mysql-host: ${{ env.MYSQL_HOST }}
+        mysql-port: ${{ env.MYSQL_PORT }}
+        mysql-user: ${{ env.MYSQL_USER }}
+        mysql-password: ${{ env.MYSQL_PASSWORD }}
+        mysql-ssl-mode: ${{ env.MYSQL_SSL_MODE }}
+        source-database: ${{ inputs.database-template }}
+        target-database: ${{ steps.config.outputs.database_name }}
+        sqlite-source-path: ${{ inputs.sqlite-source-path }}
+        sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
+        sqlite-also-clone: ${{ inputs.sqlite-also-clone }}
+
+    - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true'
+      uses: ./.feature-deploys/.github/actions/deploy
+      with:
+        destination: ${{ steps.config.outputs.destination }}
+
+    - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && success()
+      uses: ./.feature-deploys/.github/actions/deployment-status
+      with:
+        state: success
+        environment-name: preview-${{ steps.config.outputs.slug }}
+        url: ${{ steps.config.outputs.url }}
+
+    - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && success()
+      uses: ./.feature-deploys/.github/actions/pr-comment
+      with:
+        state: ready
+        url: ${{ steps.config.outputs.url }}
+        destination: ${{ steps.config.outputs.destination }}
+        database-name: ${{ steps.config.outputs.database_name }}
+
+    - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && failure()
+      uses: ./.feature-deploys/.github/actions/deployment-status
+      with:
+        state: failure
+        environment-name: preview-${{ steps.config.outputs.slug }}
+
+    - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && failure()
+      uses: ./.feature-deploys/.github/actions/pr-comment
+      with:
+        state: failed
+        destination: ${{ steps.config.outputs.destination }}
+        database-name: ${{ steps.config.outputs.database_name }}
+
+    # ── TEARDOWN PATH ────────────────────────────────────────────────────
+    - if: steps.dispatch.outputs.mode == 'teardown'
+      uses: ./.feature-deploys/.github/actions/teardown
+      with:
+        destination: ${{ steps.config.outputs.destination }}
+
+    - if: steps.dispatch.outputs.mode == 'teardown' && inputs.database-engine != 'none'
+      uses: ./.feature-deploys/.github/actions/drop-database
+      with:
+        engine: ${{ inputs.database-engine }}
+        host: ${{ inputs.deploy-host }}
+        ssh-user: ${{ inputs.ssh-user }}
+        ssh-port: ${{ inputs.ssh-port }}
+        pg-host: ${{ env.PG_HOST }}
+        pg-port: ${{ env.PG_PORT }}
+        pg-user: ${{ env.PG_USER }}
+        pg-password: ${{ env.PG_PASSWORD }}
+        pg-sslmode: ${{ env.PG_SSLMODE }}
+        mysql-host: ${{ env.MYSQL_HOST }}
+        mysql-port: ${{ env.MYSQL_PORT }}
+        mysql-user: ${{ env.MYSQL_USER }}
+        mysql-password: ${{ env.MYSQL_PASSWORD }}
+        mysql-ssl-mode: ${{ env.MYSQL_SSL_MODE }}
+        target-database: ${{ steps.config.outputs.database_name }}
+        sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
+        sqlite-also-drop: ${{ inputs.sqlite-also-clone }}
+
+    - if: steps.dispatch.outputs.mode == 'teardown' && always()
+      uses: ./.feature-deploys/.github/actions/deployment-status
+      with:
+        state: removed
+        environment-name: preview-${{ steps.config.outputs.slug }}
+
+    - if: steps.dispatch.outputs.mode == 'teardown' && always() && github.event_name == 'pull_request'
+      uses: ./.feature-deploys/.github/actions/pr-comment
+      with:
+        state: removed
+        destination: ${{ steps.config.outputs.destination }}
+        database-name: ${{ steps.config.outputs.database_name }}
+        pr-number: ${{ github.event.pull_request.number }}

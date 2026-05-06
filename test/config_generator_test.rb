@@ -253,6 +253,63 @@ class ConfigGeneratorTest < Minitest::Test
     end
   end
 
+  def test_memory_and_cpu_limits_applied_to_array_form_role
+    in_tmpdir do
+      write_base_deploy("config/deploy.staging.yml", "servers" => {"web" => ["10.0.0.1", "10.0.0.2"]})
+      FeatureDeploys::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com",
+        memory_limit: "256m",
+        cpu_limit: "0.5"
+      ).call
+      yaml = YAML.safe_load_file("config/deploy.awesome-thing.yml")
+      assert_equal ["10.0.0.1", "10.0.0.2"], yaml["servers"]["web"]["hosts"]
+      assert_equal "256m", yaml["servers"]["web"]["options"]["memory"]
+      assert_equal "0.5", yaml["servers"]["web"]["options"]["cpus"]
+    end
+  end
+
+  def test_memory_and_cpu_limits_applied_to_hash_form_role
+    in_tmpdir do
+      base = {
+        "servers" => {
+          "web" => {"hosts" => ["10.0.0.1"], "options" => {"label" => "preview"}},
+          "job" => {"hosts" => ["10.0.0.2"], "cmd" => "bin/jobs"}
+        }
+      }
+      write_base_deploy("config/deploy.staging.yml", base)
+      FeatureDeploys::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com",
+        memory_limit: "512m"
+      ).call
+      yaml = YAML.safe_load_file("config/deploy.awesome-thing.yml")
+      # web: existing options preserved, memory added
+      assert_equal "preview", yaml["servers"]["web"]["options"]["label"]
+      assert_equal "512m", yaml["servers"]["web"]["options"]["memory"]
+      # job: hash form gets options added; cmd preserved
+      assert_equal "bin/jobs", yaml["servers"]["job"]["cmd"]
+      assert_equal "512m", yaml["servers"]["job"]["options"]["memory"]
+    end
+  end
+
+  def test_no_resource_limits_does_not_touch_servers
+    in_tmpdir do
+      base = {"servers" => {"web" => ["10.0.0.1"]}}
+      write_base_deploy("config/deploy.staging.yml", base)
+      FeatureDeploys::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com"
+      ).call
+      yaml = YAML.safe_load_file("config/deploy.awesome-thing.yml")
+      # Untouched array form
+      assert_equal ["10.0.0.1"], yaml["servers"]["web"]
+    end
+  end
+
   def test_raises_on_missing_base_deploy_file
     in_tmpdir do
       err = assert_raises(FeatureDeploys::ConfigGenerator::Error) do

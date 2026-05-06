@@ -60,7 +60,7 @@ service account token:
 # vars set on the calling workflow.
 jobs:
   preview:
-    uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1
+    uses: web-ascender/feature-deploys/.github/workflows/preview.yml@v1
     with:
       base-secrets-file: .kamal/secrets.staging
       ...

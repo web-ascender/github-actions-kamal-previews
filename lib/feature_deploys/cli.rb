@@ -62,7 +62,9 @@ module FeatureDeploys
         env_overrides: opts.fetch(:env_overrides),
         env_secret_overrides: opts.fetch(:env_secret_overrides),
         deploy_timeout: opts[:deploy_timeout],
-        builder_context: opts[:builder_context]
+        builder_context: opts[:builder_context],
+        memory_limit: opts[:memory_limit],
+        cpu_limit: opts[:cpu_limit]
       ).call
 
       emit({
@@ -131,6 +133,8 @@ module FeatureDeploys
         end
         o.on("--deploy-timeout SECONDS", Integer) { |v| opts[:deploy_timeout] = v }
         o.on("--builder-context PATH", "override builder.context") { |v| opts[:builder_context] = v }
+        o.on("--memory-limit VALUE", "Docker --memory cap (e.g. '256m', '1g') for every server role") { |v| opts[:memory_limit] = v }
+        o.on("--cpu-limit VALUE", "Docker --cpus cap (e.g. '0.5')") { |v| opts[:cpu_limit] = v }
 
         o.on("-h", "--help") { puts o; exit }
       end.parse!(argv)
