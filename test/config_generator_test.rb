@@ -468,6 +468,58 @@ class ConfigGeneratorTest < Minitest::Test
     refute spec_url_prefix.url_mode?, "URL must be a suffix, not anywhere in the name"
   end
 
+  def test_loads_service_from_sibling_deploy_yml_when_destination_file_lacks_it
+    in_tmpdir do
+      FileUtils.mkdir_p("config")
+      # The shared deploy.yml has top-level keys like `service:` and `image:`.
+      File.write("config/deploy.yml", YAML.dump(
+        "service" => "myapp",
+        "image" => "acme/myapp",
+        "registry" => {"server" => "ghcr.io"}
+      ))
+      # The destination file is a thin override — no service / image.
+      File.write("config/deploy.staging.yml", YAML.dump(
+        "servers" => {"web" => ["10.0.0.1"]},
+        "proxy" => {"host" => "staging.example.com", "ssl" => true},
+        "env" => {"clear" => {"RAILS_ENV" => "staging"}}
+      ))
+      result = KamalPreviews::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com"
+      ).call
+
+      yaml = YAML.safe_load_file(result.deploy_file)
+      assert_equal "myapp-awesome-thing", yaml["service"], "service: derived from sibling deploy.yml"
+      # destination overrides preserved
+      assert_equal "awesome-thing.preview.example.com", yaml["proxy"]["host"]
+      assert_equal "staging", yaml["env"]["clear"]["RAILS_ENV"]
+    end
+  end
+
+  def test_destination_file_values_override_sibling_deploy_yml
+    in_tmpdir do
+      FileUtils.mkdir_p("config")
+      File.write("config/deploy.yml", YAML.dump(
+        "service" => "myapp",
+        "image" => "acme/myapp",
+        "proxy" => {"host" => "default.example.com", "ssl" => false}
+      ))
+      File.write("config/deploy.staging.yml", YAML.dump(
+        "proxy" => {"host" => "staging.example.com", "ssl" => true},
+        "servers" => {"web" => ["10.0.0.1"]}
+      ))
+      result = KamalPreviews::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com"
+      ).call
+      yaml = YAML.safe_load_file(result.deploy_file)
+      # destination's proxy block wins — even though deploy.yml has its own
+      assert_equal true, yaml["proxy"]["ssl"]
+    end
+  end
+
   def test_no_databases_writes_no_database_env_clear_entries
     in_tmpdir do
       write_base_deploy

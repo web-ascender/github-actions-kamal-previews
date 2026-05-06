@@ -225,17 +225,33 @@ module KamalPreviews
     end
 
     def load_base_yaml
-      raw = File.read(@base_deploy_file)
-      begin
-        # We deliberately allow aliases (Kamal configs often use them) but no
-        # arbitrary classes and no symbolization.
-        data = YAML.safe_load(raw, permitted_classes: [Date, Time], aliases: true)
-      rescue Psych::SyntaxError => e
-        raise Error, "Failed to parse #{@base_deploy_file}: #{e.message}"
-      end
+      data = parse_yaml(@base_deploy_file)
       raise Error, "#{@base_deploy_file} root must be a mapping" unless data.is_a?(Hash)
 
+      # Kamal's destination convention puts shared config in deploy.yml and
+      # destination-specific overrides in deploy.<destination>.yml. `kamal -d
+      # staging` merges both at deploy time. If our base file is a
+      # destination override, top-level keys like `service:` and `image:`
+      # may live in the sibling deploy.yml — read it and fill in the gaps
+      # so we have everything needed to derive the per-PR config.
+      sibling = File.join(File.dirname(@base_deploy_file), "deploy.yml")
+      if sibling != @base_deploy_file && File.exist?(sibling)
+        shared = parse_yaml(sibling)
+        if shared.is_a?(Hash)
+          # Destination values win where they're set; the shared file fills
+          # in everything else.
+          data = shared.merge(data) { |_key, _shared_v, dest_v| dest_v }
+        end
+      end
+
       data
+    end
+
+    def parse_yaml(path)
+      raw = File.read(path)
+      YAML.safe_load(raw, permitted_classes: [Date, Time], aliases: true)
+    rescue Psych::SyntaxError => e
+      raise Error, "Failed to parse #{path}: #{e.message}"
     end
 
     def expand(template, base_service: nil)
