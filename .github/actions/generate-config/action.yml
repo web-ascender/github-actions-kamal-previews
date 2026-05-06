@@ -118,7 +118,7 @@ outputs:
     description: Echoes the env-label input.
     value: ${{ steps.run.outputs.env_label }}
   url:
-    description: Convenience: full https:// URL of the preview app.
+    description: "Convenience: full https:// URL of the preview app."
     value: https://${{ steps.run.outputs.proxy_host }}
 
 runs:

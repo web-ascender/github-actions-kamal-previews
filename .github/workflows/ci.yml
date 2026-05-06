@@ -41,6 +41,37 @@ jobs:
         with:
           args: -color
 
+  yaml-parse:
+    name: Strict YAML parse
+    # Catches "mapping values are not allowed in this context" errors that
+    # GitHub's runner-side YAML parser flags (e.g. unquoted scalars with
+    # `:` inside, multi-line bash strings whose continuation lines violate
+    # block-scalar indent). actionlint is more permissive than GHA's
+    # action-loader; this catches the gap.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - run: |
+          ruby -ryaml -e '
+            files = ["action.yml", "sweep/action.yml"] +
+                    Dir.glob(".github/actions/*/action.yml") +
+                    Dir.glob(".github/workflows/*.yml")
+            fails = 0
+            files.each do |f|
+              begin
+                YAML.safe_load_file(f, aliases: true)
+                puts "OK   #{f}"
+              rescue => e
+                puts "FAIL #{f}: #{e.message}"
+                fails += 1
+              end
+            end
+            exit(fails)
+          '
+
   postgres-integration:
     name: Postgres clone/drop smoke test
     runs-on: ubuntu-latest

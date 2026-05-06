@@ -32,7 +32,7 @@ inputs:
     required: false
     default: "true"
   setup-gha-cache:
-    description: Whether to expose the GitHub Actions cache to BuildKit (used by Kamal's `cache: type: gha` builder option).
+    description: "Whether to expose the GitHub Actions cache to BuildKit (used by Kamal's `cache: type: gha` builder option)."
     required: false
     default: "true"
   registry-username:

@@ -29,10 +29,10 @@ description: |
                 deploy-host:       staging.example.com
                 database-engine:   postgres
                 databases: |
-                  DATABASE_NAME=myapp_staging:myapp_{db_slug}
+                  DATABASE_URL=myapp_staging:myapp_{db_slug}
               env:
-                SSH_PRIVATE_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
-                RAILS_MASTER_KEY: ${{ secrets.STAGING_MASTER_KEY }}
+                SSH_PRIVATE_KEY:  $${{ secrets.DEPLOY_SSH_KEY }}
+                RAILS_MASTER_KEY: $${{ secrets.STAGING_MASTER_KEY }}
 
   Orphans are processed sequentially — for a handful of stale previews per
   day, this is fine. Adopters who genuinely need parallel cleanup of many

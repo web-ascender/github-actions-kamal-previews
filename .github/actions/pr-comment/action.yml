@@ -25,7 +25,7 @@ inputs:
     required: false
     default: ""
   github-token:
-    description: GitHub token with `pull-requests: write`.
+    description: "GitHub token with `pull-requests: write`."
     required: false
     default: ${{ github.token }}
   marker:
@@ -67,21 +67,14 @@ runs:
           *)        emoji=":information_source:"    ; status="Status: \`$STATE\`" ;;
         esac
 
-        body="$MARKER
-$emoji $status
-
-| | |
-| --- | --- |
-"
-        [ -n "$URL" ]      && body+="| URL | <$URL> |
-"
-        [ -n "$DEST" ]     && body+="| Kamal destination | \`$DEST\` |
-"
-        [ -n "$DB_NAME" ]  && body+="| Database | \`$DB_NAME\` |
-"
-        body+="| Workflow run | [$RUN_ID]($SERVER_URL/$GH_REPO/actions/runs/$RUN_ID) |
-
-<sub>Posted by [kamal-previews](https://github.com/web-ascender/github-actions-kamal-previews).</sub>"
+        # Build body with printf-controlled newlines so the string is on a
+        # single YAML line (literal LFs in a YAML block scalar must respect
+        # the block's indent; printf %b lets us emit \n freely).
+        body="$(printf '%s\n%s %s\n\n| | |\n| --- | --- |\n' "$MARKER" "$emoji" "$status")"
+        [ -n "$URL" ]     && body+="$(printf '| URL | <%s> |\n' "$URL")"
+        [ -n "$DEST" ]    && body+="$(printf '| Kamal destination | `%s` |\n' "$DEST")"
+        [ -n "$DB_NAME" ] && body+="$(printf '| Database | `%s` |\n' "$DB_NAME")"
+        body+="$(printf '| Workflow run | [%s](%s/%s/actions/runs/%s) |\n\n<sub>Posted by [kamal-previews](https://github.com/web-ascender/github-actions-kamal-previews).</sub>' "$RUN_ID" "$SERVER_URL" "$GH_REPO" "$RUN_ID")"
 
         # Find existing comment by marker
         existing_id="$(gh api -H 'Accept: application/vnd.github+json' \

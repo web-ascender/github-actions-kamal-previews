@@ -62,9 +62,9 @@ on:
         type: string
         default: "DATABASE_URL"
 
-      sqlite-source-path:        { type: string, default: "" }
-      sqlite-target-path-pattern:{ type: string, default: "" }
-      sqlite-also-clone:         { type: string, default: "" }
+      sqlite-source-path:         { type: string, default: "" }
+      sqlite-target-path-pattern: { type: string, default: "" }
+      sqlite-also-clone:          { type: string, default: "" }
 
       base-secrets-file:       { type: string, default: "" }
       domain-label-pattern:    { type: string, default: "{slug}" }
@@ -341,9 +341,9 @@ jobs:
           if [ "$active_count" -ge "$MAX_ACTIVE" ]; then
             msg="🚦 **Preview cap reached.** ${active_count} active preview environments are already running, which meets the cap of \`max-active-previews=${MAX_ACTIVE}\`. Close another preview PR (or wait for it to be torn down) and re-run this workflow."
             if [ -n "${PR_NUMBER:-}" ]; then
+              body="$(printf '<!-- kamal-previews:status -->\n%s' "$msg")"
               gh api --method POST "/repos/$GH_REPO/issues/${PR_NUMBER}/comments" \
-                -f body="<!-- kamal-previews:status -->
-$msg" >/dev/null || true
+                -f body="$body" >/dev/null || true
             fi
             echo "::error::$msg"
             exit 1

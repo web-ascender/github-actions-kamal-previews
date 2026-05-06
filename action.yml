@@ -32,10 +32,10 @@ description: |
                 databases: |
                   DATABASE_URL=myapp_staging:myapp_{db_slug}
               env:
-                SSH_PRIVATE_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
+                SSH_PRIVATE_KEY:  $${{ secrets.DEPLOY_SSH_KEY }}
                 # Required only if the secrets file shells out to
                 # `bin/rails credentials:fetch` to populate DATABASE_URL.
-                RAILS_MASTER_KEY: ${{ secrets.STAGING_MASTER_KEY }}
+                RAILS_MASTER_KEY: $${{ secrets.STAGING_MASTER_KEY }}
 
   Internally dispatches based on the triggering event:
     - pull_request opened/synchronize/reopened   → deploy
@@ -147,13 +147,20 @@ inputs:
   ssh-port:                   { required: false, default: "22" }
 
 outputs:
-  slug:          { value: ${{ steps.config.outputs.slug }} }
-  db_slug:       { value: ${{ steps.config.outputs.db_slug }} }
-  destination:   { value: ${{ steps.config.outputs.destination }} }
-  proxy_host:    { value: ${{ steps.config.outputs.proxy_host }} }
-  url:           { value: ${{ steps.config.outputs.url }} }
-  database_name: { value: ${{ steps.config.outputs.database_name }} }
-  mode:          { value: ${{ steps.dispatch.outputs.mode }} }
+  slug:
+    value: ${{ steps.config.outputs.slug }}
+  db_slug:
+    value: ${{ steps.config.outputs.db_slug }}
+  destination:
+    value: ${{ steps.config.outputs.destination }}
+  proxy_host:
+    value: ${{ steps.config.outputs.proxy_host }}
+  url:
+    value: ${{ steps.config.outputs.url }}
+  database_name:
+    value: ${{ steps.config.outputs.database_name }}
+  mode:
+    value: ${{ steps.dispatch.outputs.mode }}
 
 runs:
   using: composite
@@ -487,9 +494,9 @@ runs:
         if [ "$active_count" -ge "$MAX_ACTIVE" ]; then
           msg="🚦 **Preview cap reached.** ${active_count} active preview environments are already running, which meets the cap of \`max-active-previews=${MAX_ACTIVE}\`. Close another preview PR (or wait for it to be torn down) and re-run this workflow."
           if [ -n "${PR_NUMBER:-}" ]; then
+            body="$(printf '<!-- kamal-previews:status -->\n%s' "$msg")"
             gh api --method POST "/repos/$GH_REPO/issues/${PR_NUMBER}/comments" \
-              -f body="<!-- kamal-previews:status -->
-$msg" >/dev/null || true
+              -f body="$body" >/dev/null || true
           fi
           echo "::error::$msg"
           exit 1
