@@ -33,52 +33,6 @@ class ConfigGeneratorTest < Minitest::Test
     end
   end
 
-  def test_database_name_substitution
-    in_tmpdir do
-      write_base_deploy
-      result = KamalPreviews::ConfigGenerator.new(
-        namer_result: namer,
-        base_deploy_file: "config/deploy.staging.yml",
-        domain_suffix: "preview.example.com",
-        database_name_pattern: "myapp_{db_slug}"
-      ).call
-
-      assert_equal "myapp_awesome_thing", result.database_name
-      yaml = YAML.safe_load_file(result.deploy_file)
-      assert_equal "myapp_awesome_thing", yaml["env"]["clear"]["DATABASE_NAME"]
-    end
-  end
-
-  def test_base_database_token_in_pattern
-    in_tmpdir do
-      write_base_deploy
-      result = KamalPreviews::ConfigGenerator.new(
-        namer_result: namer,
-        base_deploy_file: "config/deploy.staging.yml",
-        domain_suffix: "preview.example.com",
-        database_name_pattern: "{base_database}_{db_slug}",
-        base_database: "myapp_staging"
-      ).call
-
-      assert_equal "myapp_staging_awesome_thing", result.database_name
-    end
-  end
-
-  def test_raises_when_pattern_uses_base_database_but_none_given
-    in_tmpdir do
-      write_base_deploy
-      err = assert_raises(KamalPreviews::ConfigGenerator::Error) do
-        KamalPreviews::ConfigGenerator.new(
-          namer_result: namer,
-          base_deploy_file: "config/deploy.staging.yml",
-          domain_suffix: "preview.example.com",
-          database_name_pattern: "{base_database}_{db_slug}"
-        ).call
-      end
-      assert_match(/base_database/, err.message)
-    end
-  end
-
   def test_image_tag_override_replaces_existing_tag
     in_tmpdir do
       write_base_deploy("config/deploy.staging.yml", "image" => "acme/myapp:staging")
@@ -350,6 +304,113 @@ class ConfigGeneratorTest < Minitest::Test
         ).call
       end
       assert_match(/service/, err.message)
+    end
+  end
+
+  def test_databases_list_writes_one_env_clear_entry_per_database
+    in_tmpdir do
+      write_base_deploy
+      result = KamalPreviews::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com",
+        databases: <<~SPEC
+          DATABASE_NAME=myapp_staging:myapp_{db_slug}
+          QUEUE_DATABASE_NAME=myapp_staging_queue:myapp_queue_{db_slug}
+          CACHE_DATABASE_NAME=myapp_staging_cache:myapp_cache_{db_slug}
+        SPEC
+      ).call
+
+      assert_equal({
+        "DATABASE_NAME" => "myapp_awesome_thing",
+        "QUEUE_DATABASE_NAME" => "myapp_queue_awesome_thing",
+        "CACHE_DATABASE_NAME" => "myapp_cache_awesome_thing"
+      }, result.databases)
+      # Back-compat: `database_name` shortcut points at DATABASE_NAME entry.
+      assert_equal "myapp_awesome_thing", result.database_name
+
+      yaml = YAML.safe_load_file(result.deploy_file)
+      assert_equal "myapp_awesome_thing", yaml["env"]["clear"]["DATABASE_NAME"]
+      assert_equal "myapp_queue_awesome_thing", yaml["env"]["clear"]["QUEUE_DATABASE_NAME"]
+      assert_equal "myapp_cache_awesome_thing", yaml["env"]["clear"]["CACHE_DATABASE_NAME"]
+    end
+  end
+
+  def test_databases_list_supports_base_database_token
+    in_tmpdir do
+      write_base_deploy
+      result = KamalPreviews::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com",
+        databases: "DATABASE_NAME=myapp_staging:{base_database}_{db_slug}"
+      ).call
+
+      assert_equal "myapp_staging_awesome_thing", result.database_name
+    end
+  end
+
+  def test_databases_list_skips_blank_lines_and_comments
+    in_tmpdir do
+      write_base_deploy
+      result = KamalPreviews::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com",
+        databases: <<~SPEC
+
+          # primary
+          DATABASE_NAME=myapp_staging:myapp_{db_slug}
+
+          # queue (commented out for now)
+          # QUEUE_DATABASE_NAME=myapp_staging_queue:myapp_queue_{db_slug}
+        SPEC
+      ).call
+      assert_equal({"DATABASE_NAME" => "myapp_awesome_thing"}, result.databases)
+    end
+  end
+
+  def test_databases_list_rejects_duplicate_env_names
+    in_tmpdir do
+      write_base_deploy
+      err = assert_raises(KamalPreviews::ConfigGenerator::Error) do
+        KamalPreviews::ConfigGenerator.new(
+          namer_result: namer,
+          base_deploy_file: "config/deploy.staging.yml",
+          domain_suffix: "preview.example.com",
+          databases: "DATABASE_NAME=a:a_{db_slug}\nDATABASE_NAME=b:b_{db_slug}"
+        ).call
+      end
+      assert_match(/duplicate database env names/, err.message)
+    end
+  end
+
+  def test_databases_list_rejects_malformed_entries
+    [
+      "DATABASE_NAME",                # missing `=`
+      "DATABASE_NAME=myapp_staging",  # missing `:`
+      "=myapp_staging:pat",           # empty env_name
+      "DATABASE_NAME=:pat",           # empty source
+      "DATABASE_NAME=myapp_staging:"  # empty pattern
+    ].each do |bad|
+      err = assert_raises(KamalPreviews::ConfigGenerator::Error) do
+        KamalPreviews::ConfigGenerator.parse_database_entry(bad)
+      end
+      assert_match(/database entry/, err.message, "expected error for #{bad.inspect}")
+    end
+  end
+
+  def test_no_databases_writes_no_database_env_clear_entries
+    in_tmpdir do
+      write_base_deploy
+      result = KamalPreviews::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com"
+      ).call
+      yaml = YAML.safe_load_file(result.deploy_file)
+      refute yaml["env"]["clear"].key?("DATABASE_NAME")
+      assert_equal({}, result.databases)
     end
   end
 

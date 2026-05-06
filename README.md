@@ -83,27 +83,27 @@ jobs:
 
       - uses: web-ascender/github-actions-kamal-previews@v1
         with:
-          base-deploy-file:        config/deploy.staging.yml
-          base-secrets-file:       .kamal/secrets.staging
-          domain-suffix:           preview.example.com
-          deploy-host:             staging.example.com
-          database-engine:         postgres
-          database-template:       myapp_staging
-          database-name-pattern:   "myapp_{db_slug}"
+          base-deploy-file:    config/deploy.staging.yml
+          base-secrets-file:   .kamal/secrets.staging
+          domain-suffix:       preview.example.com
+          deploy-host:         staging.example.com
+          database-engine:     postgres
+          databases: |
+            DATABASE_NAME=myapp_staging:myapp_{db_slug}
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          PG_HOST:         ${{ secrets.PG_HOST }}
-          PG_USER:         ${{ secrets.PG_USER }}
-          PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
+          SSH_PRIVATE_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
+          # No DB credentials needed here — the action sources
+          # base-secrets-file and reads DATABASE_URL for the admin
+          # connection. Override with the DATABASE_ADMIN_URL secret if
+          # the staging app role lacks CREATEDB.
 ```
 
 The repo-level GitHub Actions secrets the workflow expects:
 
 | Secret | When |
 | --- | --- |
-| `DEPLOY_SSH_KEY` | Always — the deploy host SSH key. |
-| `PG_HOST`, `PG_USER`, `PG_PASSWORD` | `database-engine: postgres`. |
-| `MYSQL_HOST`, `MYSQL_USER`, `MYSQL_PASSWORD` | `database-engine: mysql`. |
+| `DEPLOY_SSH_KEY`     | Always — the deploy host SSH key. |
+| `DATABASE_ADMIN_URL` | Only if the URL exposed by your `base-secrets-file` doesn't have CREATEDB. Format: `postgres://admin:secret@host:5432/postgres?sslmode=verify-full`. |
 | `VPN_PRIVATE_KEY`, `VPN_PUBLIC_KEY` | Only if pairing with the WireGuard step above. |
 
 Add them under Settings → Secrets and variables → Actions. The first PR

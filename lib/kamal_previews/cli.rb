@@ -55,8 +55,7 @@ module KamalPreviews
         domain_label_pattern: opts.fetch(:domain_label_pattern),
         service_pattern: opts.fetch(:service_pattern),
         destination_pattern: opts.fetch(:destination_pattern),
-        database_name_pattern: opts[:database_name_pattern],
-        base_database: opts[:base_database],
+        databases: opts.fetch(:databases),
         image_tag: opts[:image_tag],
         env_label: opts.fetch(:env_label),
         env_overrides: opts.fetch(:env_overrides),
@@ -66,6 +65,13 @@ module KamalPreviews
         memory_limit: opts[:memory_limit],
         cpu_limit: opts[:cpu_limit]
       ).call
+
+      # Multi-line `databases_resolved` output: one `ENV_NAME=source:target`
+      # entry per line — same shape as the input `--database` flag, with the
+      # target name fully resolved. Consumers (clone-database, drop-database)
+      # parse it back to drive their loops; ConfigGenerator has already
+      # written `env.clear[ENV_NAME] = target` into the per-PR deploy.yml.
+      databases_resolved = config_result.databases_full.join("\n")
 
       emit({
         branch: namer_result.branch,
@@ -77,6 +83,7 @@ module KamalPreviews
         proxy_host: config_result.proxy_host,
         service_name: config_result.service_name,
         database_name: config_result.database_name,
+        databases_resolved: databases_resolved,
         env_label: config_result.env_label
       })
     end
@@ -101,7 +108,8 @@ module KamalPreviews
         destination_pattern: ConfigGenerator::DEFAULT_DESTINATION_PATTERN,
         env_label: ConfigGenerator::DEFAULT_ENV_LABEL,
         env_overrides: {},
-        env_secret_overrides: []
+        env_secret_overrides: [],
+        databases: []
       }
 
       OptionParser.new do |o|
@@ -118,8 +126,9 @@ module KamalPreviews
         o.on("--service-pattern PATTERN", "default: '{base_service}-{slug}'") { |v| opts[:service_pattern] = v }
         o.on("--destination-pattern PATTERN", "default: '{slug}'") { |v| opts[:destination_pattern] = v }
 
-        o.on("--database-name-pattern PATTERN", "e.g. 'myapp_{db_slug}' (omit to skip writing DATABASE_NAME)") { |v| opts[:database_name_pattern] = v }
-        o.on("--base-database NAME", "expands {base_database} in --database-name-pattern") { |v| opts[:base_database] = v }
+        o.on("--database SPEC", "ENV_NAME=source:pattern (repeatable). e.g. 'DATABASE_NAME=myapp_staging:myapp_{db_slug}'") do |v|
+          opts[:databases] << v
+        end
 
         o.on("--image-tag TAG") { |v| opts[:image_tag] = v }
         o.on("--env-label LABEL", "default: 'preview'") { |v| opts[:env_label] = v }

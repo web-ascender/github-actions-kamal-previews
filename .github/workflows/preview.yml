@@ -44,8 +44,23 @@ on:
       deploy-host:             { type: string, required: true }
 
       database-engine:         { type: string, default: none }
-      database-template:       { type: string, default: "" }
-      database-name-pattern:   { type: string, default: "" }
+      databases:
+        description: |
+          Multi-line list of databases (postgres/mysql). One entry per line:
+          `ENV_NAME=source_db:target_pattern`. Tokens in pattern: `{slug}`,
+          `{db_slug}`, `{base_database}` (= source). Each entry produces a
+          clone, an env.clear[ENV_NAME] entry with the resolved per-PR DB
+          name, a $ENV_NAME runner-env export, and a teardown drop.
+        type: string
+        default: ""
+      database-admin-url-var:
+        description: |
+          Variable name to read from `base-secrets-file` as the admin
+          connection URL. Default `DATABASE_URL`. Override with
+          `DATABASE_ADMIN_URL` secret if you need a different value than the
+          one your staging app connects with.
+        type: string
+        default: "DATABASE_URL"
 
       sqlite-source-path:        { type: string, default: "" }
       sqlite-target-path-pattern:{ type: string, default: "" }
@@ -85,19 +100,11 @@ on:
       ssh-port:                { type: string, default: "22" }
 
     secrets:
-      SSH_PRIVATE_KEY:    { required: true }
-      PG_HOST:            { required: false }
-      PG_PORT:            { required: false }
-      PG_USER:            { required: false }
-      PG_PASSWORD:        { required: false }
-      PG_SSLMODE:         { required: false }
-      MYSQL_HOST:         { required: false }
-      MYSQL_PORT:         { required: false }
-      MYSQL_USER:         { required: false }
-      MYSQL_PASSWORD:     { required: false }
-      MYSQL_SSL_MODE:     { required: false }
-      KAMAL_REGISTRY_USERNAME:  { required: false }
-      KAMAL_REGISTRY_PASSWORD:  { required: false }
+      SSH_PRIVATE_KEY:           { required: true }
+      DATABASE_ADMIN_URL:        { required: false }
+      RAILS_MASTER_KEY:          { required: false }
+      KAMAL_REGISTRY_USERNAME:   { required: false }
+      KAMAL_REGISTRY_PASSWORD:   { required: false }
 
 permissions:
   contents: read
@@ -195,8 +202,7 @@ jobs:
           domain-label-pattern: ${{ inputs.domain-label-pattern }}
           service-pattern: ${{ inputs.service-pattern }}
           destination-pattern: ${{ inputs.destination-pattern }}
-          database-name-pattern: ${{ inputs.database-name-pattern }}
-          base-database: ${{ inputs.database-template }}
+          databases: ${{ inputs.databases }}
           image-tag: ${{ inputs.image-tag }}
           env-label: ${{ inputs.env-label }}
           env-overrides: ${{ inputs.env-overrides }}
@@ -206,6 +212,27 @@ jobs:
           memory-limit: ${{ inputs.memory-limit }}
           cpu-limit: ${{ inputs.cpu-limit }}
           prefix-strip: ${{ inputs.prefix-strip }}
+
+      - id: db_admin_url
+        if: inputs.database-engine == 'postgres' || inputs.database-engine == 'mysql'
+        env:
+          EXPLICIT_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+          BASE_SECRETS_FILE: ${{ inputs.base-secrets-file }}
+          VAR_NAME: ${{ inputs.database-admin-url-var }}
+          RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+        run: |
+          set -euo pipefail
+          url=""
+          if [ -n "${EXPLICIT_URL:-}" ]; then
+            url="$EXPLICIT_URL"
+          elif [ -n "$BASE_SECRETS_FILE" ] && [ -f "$BASE_SECRETS_FILE" ]; then
+            url="$(set -a; . "$BASE_SECRETS_FILE"; set +a; printf '%s' "${!VAR_NAME-}")"
+          fi
+          if [ -z "$url" ]; then
+            echo "::error::Could not resolve a database admin URL. Set the DATABASE_ADMIN_URL secret or point base-secrets-file at a file that exposes \$${VAR_NAME}."; exit 1
+          fi
+          echo "::add-mask::$url"
+          echo "KAMAL_PREVIEWS_DB_ADMIN_URL=$url" >> "$GITHUB_ENV"
 
       - name: Enforce max-active-previews cap
         if: inputs.max-active-previews > 0
@@ -289,18 +316,8 @@ $msg" >/dev/null || true
           host: ${{ inputs.deploy-host }}
           ssh-user: ${{ inputs.ssh-user }}
           ssh-port: ${{ inputs.ssh-port }}
-          pg-host: ${{ secrets.PG_HOST }}
-          pg-port: ${{ secrets.PG_PORT }}
-          pg-user: ${{ secrets.PG_USER }}
-          pg-password: ${{ secrets.PG_PASSWORD }}
-          pg-sslmode: ${{ secrets.PG_SSLMODE }}
-          mysql-host: ${{ secrets.MYSQL_HOST }}
-          mysql-port: ${{ secrets.MYSQL_PORT }}
-          mysql-user: ${{ secrets.MYSQL_USER }}
-          mysql-password: ${{ secrets.MYSQL_PASSWORD }}
-          mysql-ssl-mode: ${{ secrets.MYSQL_SSL_MODE }}
-          source-database: ${{ inputs.database-template }}
-          target-database: ${{ steps.config.outputs.database_name }}
+          admin-url: ${{ env.KAMAL_PREVIEWS_DB_ADMIN_URL }}
+          databases: ${{ steps.config.outputs.databases_resolved }}
           sqlite-source-path: ${{ inputs.sqlite-source-path }}
           sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
           sqlite-also-clone: ${{ inputs.sqlite-also-clone }}
@@ -395,10 +412,30 @@ $msg" >/dev/null || true
           domain-label-pattern: ${{ inputs.domain-label-pattern }}
           service-pattern: ${{ inputs.service-pattern }}
           destination-pattern: ${{ inputs.destination-pattern }}
-          database-name-pattern: ${{ inputs.database-name-pattern }}
-          base-database: ${{ inputs.database-template }}
+          databases: ${{ inputs.databases }}
           env-label: ${{ inputs.env-label }}
           prefix-strip: ${{ inputs.prefix-strip }}
+
+      - id: db_admin_url
+        if: inputs.database-engine == 'postgres' || inputs.database-engine == 'mysql'
+        env:
+          EXPLICIT_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+          BASE_SECRETS_FILE: ${{ inputs.base-secrets-file }}
+          VAR_NAME: ${{ inputs.database-admin-url-var }}
+          RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+        run: |
+          set -euo pipefail
+          url=""
+          if [ -n "${EXPLICIT_URL:-}" ]; then
+            url="$EXPLICIT_URL"
+          elif [ -n "$BASE_SECRETS_FILE" ] && [ -f "$BASE_SECRETS_FILE" ]; then
+            url="$(set -a; . "$BASE_SECRETS_FILE"; set +a; printf '%s' "${!VAR_NAME-}")"
+          fi
+          if [ -z "$url" ]; then
+            echo "::error::Could not resolve a database admin URL for teardown."; exit 1
+          fi
+          echo "::add-mask::$url"
+          echo "KAMAL_PREVIEWS_DB_ADMIN_URL=$url" >> "$GITHUB_ENV"
 
       - id: sqlite_path
         if: inputs.database-engine == 'sqlite'
@@ -427,17 +464,8 @@ $msg" >/dev/null || true
           host: ${{ inputs.deploy-host }}
           ssh-user: ${{ inputs.ssh-user }}
           ssh-port: ${{ inputs.ssh-port }}
-          pg-host: ${{ secrets.PG_HOST }}
-          pg-port: ${{ secrets.PG_PORT }}
-          pg-user: ${{ secrets.PG_USER }}
-          pg-password: ${{ secrets.PG_PASSWORD }}
-          pg-sslmode: ${{ secrets.PG_SSLMODE }}
-          mysql-host: ${{ secrets.MYSQL_HOST }}
-          mysql-port: ${{ secrets.MYSQL_PORT }}
-          mysql-user: ${{ secrets.MYSQL_USER }}
-          mysql-password: ${{ secrets.MYSQL_PASSWORD }}
-          mysql-ssl-mode: ${{ secrets.MYSQL_SSL_MODE }}
-          target-database: ${{ steps.config.outputs.database_name }}
+          admin-url: ${{ env.KAMAL_PREVIEWS_DB_ADMIN_URL }}
+          databases: ${{ steps.config.outputs.databases_resolved }}
           sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
           sqlite-also-drop: ${{ inputs.sqlite-also-clone }}
 

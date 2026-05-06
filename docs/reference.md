@@ -20,11 +20,18 @@ top-level composite actions.
 | Input | Description |
 | --- | --- |
 | `database-engine`           | One of `postgres`, `mysql`, `sqlite`, `none`. Default `none`. |
-| `database-template`         | Source database to clone from (postgres/mysql). |
-| `database-name-pattern`     | Pattern for the per-PR DB name. Tokens: `{slug}`, `{db_slug}`, `{base_database}`. Required for postgres/mysql. |
+| `databases`                 | Multi-line list (postgres/mysql). One entry per line, format `ENV_NAME=source_db:target_pattern`. Pattern tokens: `{slug}`, `{db_slug}`, `{base_database}` (= source). Each entry produces a clone-on-deploy, an `env.clear[ENV_NAME]` write, a `$ENV_NAME` runner-env export, and a drop-on-teardown. |
+| `database-admin-url-var`    | Variable name to read from `base-secrets-file` as the admin connection URL. Default `DATABASE_URL`. |
 | `sqlite-source-path`        | Absolute path on the deploy host to the source SQLite file (engine=sqlite). |
 | `sqlite-target-path-pattern`| Pattern for the per-PR SQLite path (engine=sqlite). Tokens: `{slug}`, `{db_slug}`. |
 | `sqlite-also-clone`         | Space-separated suffixes for companion SQLite files (e.g. "_queue _cache _cable"). |
+
+The action resolves an admin URL for cloning in this order:
+
+1. The `DATABASE_ADMIN_URL` secret/env var (explicit override).
+2. The variable named by `database-admin-url-var` (default `DATABASE_URL`), read from `base-secrets-file` after sourcing it. For Rails apps, this typically means the same URL `bin/rails credentials:fetch` returns at deploy time.
+
+The role in the URL must have `CREATEDB` (postgres) / `CREATE DATABASE` (mysql) privilege. If the URL exposed by your secrets file connects as a least-privilege app role, set `DATABASE_ADMIN_URL` to a separate admin URL.
 
 ### Generation knobs
 
@@ -65,16 +72,8 @@ forwarded automatically.
 | Secret | Required | Description |
 | --- | --- | --- |
 | `SSH_PRIVATE_KEY`     | Yes | Private key for SSHing into the deploy host. |
-| `PG_HOST`             | (postgres) | PostgreSQL server hostname. |
-| `PG_USER`             | (postgres) | PostgreSQL admin user (must have CREATEDB). |
-| `PG_PASSWORD`         | (postgres) | Password for `PG_USER`. |
-| `PG_PORT`             | No  | Default `5432`. |
-| `PG_SSLMODE`          | No  | `require`, `prefer`, `disable`, etc. |
-| `MYSQL_HOST`          | (mysql) | MySQL server hostname. |
-| `MYSQL_USER`          | (mysql) | MySQL admin user. |
-| `MYSQL_PASSWORD`      | (mysql) | Password for `MYSQL_USER`. |
-| `MYSQL_PORT`          | No  | Default `3306`. |
-| `MYSQL_SSL_MODE`      | No  | `REQUIRED`, `DISABLED`, etc. |
+| `RAILS_MASTER_KEY`    | When `base-secrets-file` shells out to `bin/rails credentials:fetch` to populate `DATABASE_URL` — the runner needs the master key to decrypt staging credentials. |
+| `DATABASE_ADMIN_URL`  | Optional | Explicit admin URL for cloning, overriding the URL read from `base-secrets-file`. Use when your app role lacks `CREATEDB`. |
 | `KAMAL_REGISTRY_USERNAME` | No  | Pre-login registry username. Same env var Kamal itself reads during `deploy.yml` ERB interpolation, so one secret can serve both. Most setups don't need a pre-login when registry auth is configured in `deploy.yml`. |
 | `KAMAL_REGISTRY_PASSWORD` | No  | Password matching `KAMAL_REGISTRY_USERNAME`. |
 
@@ -117,9 +116,27 @@ kamal-previews writes these to `env.clear` of every generated
 | `FEATURE_BRANCH_LABEL`   | Value of the `env-label` input. | Default `preview`. |
 | `FEATURE_BRANCH_SLUG`    | The branch slug. | DNS-safe. |
 | `FEATURE_BRANCH_DB_SLUG` | The DB slug. | SQL-identifier-safe. |
-| `DATABASE_NAME`          | Result of `database-name-pattern`. | Only set when `database-name-pattern` is provided. |
+| (Each `databases:` entry's `ENV_NAME`) | Resolved per-PR DB name. | One entry per `databases` line. |
 
 Plus anything you pass via `env-overrides:`.
+
+## Runner env vars exported by `generate-config`
+
+Every `databases:` entry's `ENV_NAME` is also written to the GitHub
+Actions runner env (`$GITHUB_ENV`). That makes it visible to subsequent
+steps in the same job — most importantly, kamal's own secrets-file
+evaluation (which runs on the runner shell *before* the per-PR
+deploy.yml is rendered, so it can't read `env.clear`).
+
+This is what lets your `.kamal/secrets.<dest>` file build per-PR URLs
+like:
+
+```bash
+DATABASE_URL=$(bin/rails credentials:fetch --environment staging database_url \
+              | sed -E "s|/[^/?]+(\\?|$)|/$DATABASE_NAME\\1|")
+```
+
+See [`docs/secrets.md`](secrets.md) for the full pattern.
 
 ## CLI: `bin/kamal-previews`
 

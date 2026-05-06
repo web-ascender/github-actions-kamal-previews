@@ -21,10 +21,11 @@ you may need to:
 1. Increase `DISCONNECT_TIMEOUT` via the `pg-` knobs (planned input,
    currently the script-level default).
 2. Use a dedicated "template" database that nothing else connects to, and
-   refresh it from staging on a schedule. Then point `database-template`
+   refresh it from staging on a schedule. Then point each `databases:` entry's source
    at the template database, not at staging.
 
-**Permissions.** The user in `pg-user` needs:
+**Permissions.** The role in your `DATABASE_ADMIN_URL` (or the
+`DATABASE_URL` resolved from `base-secrets-file`) needs:
 
 - `CREATEDB` to create new databases.
 - `CONNECT` privilege on the source database.
@@ -160,7 +161,7 @@ Maintain a separate `myapp_staging_sanitized` database, refreshed from
 staging nightly via your existing data-pipeline tooling
 ([PostgreSQL Anonymizer](https://postgresql-anonymizer.readthedocs.io/),
 [Replibyte](https://github.com/Qovery/Replibyte), or your own SQL
-masking). Point `database-template` at the sanitized version.
+masking). Point each `databases:` entry's source at the sanitized version.
 
 ### Post-clone sanitization hook
 

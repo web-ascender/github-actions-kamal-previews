@@ -155,26 +155,28 @@ jobs:
 
       - uses: web-ascender/github-actions-kamal-previews@v1
         with:
-          base-deploy-file:        config/deploy.staging.yml
-          base-secrets-file:       .kamal/secrets.staging
-          domain-suffix:           preview.example.com
-          deploy-host:             staging.example.com
-          database-engine:         postgres
-          database-template:       myapp_staging
-          database-name-pattern:   "myapp_{db_slug}"
+          base-deploy-file:    config/deploy.staging.yml
+          base-secrets-file:   .kamal/secrets.staging
+          domain-suffix:       preview.example.com
+          deploy-host:         staging.example.com
+          database-engine:     postgres
+          databases: |
+            DATABASE_NAME=myapp_staging:myapp_{db_slug}
         env:
           SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          PG_HOST:         ${{ secrets.PG_HOST }}
-          PG_USER:         ${{ secrets.PG_USER }}
-          PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
+          # Only needed if your base-secrets-file shells out to
+          # `bin/rails credentials:fetch`:
+          RAILS_MASTER_KEY: ${{ secrets.STAGING_MASTER_KEY }}
 ```
 
 Add the secrets at the **repo** level under Settings → Secrets and
 variables → Actions:
 
 - `DEPLOY_SSH_KEY` — same key Kamal uses
-- `PG_HOST`, `PG_USER`, `PG_PASSWORD` — admin creds on the staging DB
-  cluster
+- `STAGING_MASTER_KEY` — only if your `.kamal/secrets.staging` shells
+  out to `bin/rails credentials:fetch ...` for the URL
+- `DATABASE_ADMIN_URL` — only if your staging app role lacks `CREATEDB`
+  privilege (then provide a separate admin URL with that privilege)
 - `VPN_PRIVATE_KEY`, `VPN_PUBLIC_KEY` — only if you're using the
   WireGuard step
 

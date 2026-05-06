@@ -48,7 +48,7 @@ class CLITest < Minitest::Test
         "--base-deploy-file", "config/deploy.staging.yml",
         "--base-secrets-file", ".kamal/secrets.staging",
         "--domain-suffix", "preview.example.com",
-        "--database-name-pattern", "myapp_{db_slug}",
+        "--database", "DATABASE_NAME=myapp_staging:myapp_{db_slug}",
         "--env-override", "ROLLBAR_ENV=preview-awesome",
         "--env-override", "EXTRA=foo",
         "--env-secret", "EXTRA_SECRET",
@@ -69,6 +69,33 @@ class CLITest < Minitest::Test
       assert_equal "preview-awesome", yaml["env"]["clear"]["ROLLBAR_ENV"]
       assert_equal "foo", yaml["env"]["clear"]["EXTRA"]
       assert_includes yaml["env"]["secret"], "EXTRA_SECRET"
+    end
+  end
+
+  def test_generate_with_repeated_database_flag
+    in_tmpdir do
+      write_base_deploy
+
+      out, err, status = Open3.capture3(
+        CLI_BIN, "generate",
+        "--branch", "feature/awesome",
+        "--base-deploy-file", "config/deploy.staging.yml",
+        "--domain-suffix", "preview.example.com",
+        "--database", "DATABASE_NAME=myapp_staging:myapp_{db_slug}",
+        "--database", "QUEUE_DATABASE_NAME=myapp_staging_queue:myapp_queue_{db_slug}",
+        "--database", "CACHE_DATABASE_NAME=myapp_staging_cache:myapp_cache_{db_slug}"
+      )
+      assert status.success?, "generate should succeed: #{err}"
+      parsed = JSON.parse(out)
+      assert_equal "myapp_awesome", parsed["database_name"]
+      assert_match(/DATABASE_NAME=myapp_staging:myapp_awesome/, parsed["databases_resolved"])
+      assert_match(/QUEUE_DATABASE_NAME=myapp_staging_queue:myapp_queue_awesome/, parsed["databases_resolved"])
+      assert_match(/CACHE_DATABASE_NAME=myapp_staging_cache:myapp_cache_awesome/, parsed["databases_resolved"])
+
+      yaml = YAML.safe_load_file("config/deploy.awesome.yml")
+      assert_equal "myapp_awesome", yaml["env"]["clear"]["DATABASE_NAME"]
+      assert_equal "myapp_queue_awesome", yaml["env"]["clear"]["QUEUE_DATABASE_NAME"]
+      assert_equal "myapp_cache_awesome", yaml["env"]["clear"]["CACHE_DATABASE_NAME"]
     end
   end
 

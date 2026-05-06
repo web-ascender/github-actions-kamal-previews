@@ -23,17 +23,16 @@ description: |
               with: { private-key: ..., public-key: ..., endpoint: ..., interface-ip: ..., routes: ... }
             - uses: web-ascender/github-actions-kamal-previews/sweep@v1
               with:
-                base-deploy-file: config/deploy.staging.yml
-                domain-suffix:    preview.example.com
-                deploy-host:      staging.example.com
-                database-engine:  postgres
-                database-template: myapp_staging
-                database-name-pattern: "myapp_{db_slug}"
+                base-deploy-file:  config/deploy.staging.yml
+                base-secrets-file: .kamal/secrets.staging
+                domain-suffix:     preview.example.com
+                deploy-host:       staging.example.com
+                database-engine:   postgres
+                databases: |
+                  DATABASE_NAME=myapp_staging:myapp_{db_slug}
               env:
-                SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-                PG_HOST:         ${{ secrets.PG_HOST }}
-                PG_USER:         ${{ secrets.PG_USER }}
-                PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
+                SSH_PRIVATE_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
+                RAILS_MASTER_KEY: ${{ secrets.STAGING_MASTER_KEY }}
 
   Orphans are processed sequentially — for a handful of stale previews per
   day, this is fine. Adopters who genuinely need parallel cleanup of many
@@ -46,8 +45,8 @@ inputs:
   domain-suffix:              { required: true }
   deploy-host:                { required: true }
   database-engine:            { required: false, default: none }
-  database-template:          { required: false, default: "" }
-  database-name-pattern:      { required: false, default: "" }
+  databases:                  { required: false, default: "" }
+  database-admin-url-var:     { required: false, default: "DATABASE_URL" }
   sqlite-target-path-pattern: { required: false, default: "" }
   sqlite-also-clone:          { required: false, default: "" }
   base-secrets-file:          { required: false, default: "" }
@@ -148,6 +147,27 @@ runs:
           echo "orphan_count=${#orphans[@]}" >> "$GITHUB_OUTPUT"
         fi
 
+    - id: db_admin_url
+      if: steps.identify.outputs.orphan_count != '0' && (inputs.database-engine == 'postgres' || inputs.database-engine == 'mysql')
+      shell: bash
+      env:
+        EXPLICIT_URL: ${{ env.DATABASE_ADMIN_URL }}
+        BASE_SECRETS_FILE: ${{ inputs.base-secrets-file }}
+        VAR_NAME: ${{ inputs.database-admin-url-var }}
+      run: |
+        set -euo pipefail
+        url=""
+        if [ -n "${EXPLICIT_URL:-}" ]; then
+          url="$EXPLICIT_URL"
+        elif [ -n "$BASE_SECRETS_FILE" ] && [ -f "$BASE_SECRETS_FILE" ]; then
+          url="$(set -a; . "$BASE_SECRETS_FILE"; set +a; printf '%s' "${!VAR_NAME-}")"
+        fi
+        if [ -z "$url" ]; then
+          echo "::error::Could not resolve a database admin URL for sweep teardown."; exit 1
+        fi
+        echo "::add-mask::$url"
+        echo "KAMAL_PREVIEWS_DB_ADMIN_URL=$url" >> "$GITHUB_ENV"
+
     - id: teardown
       if: steps.identify.outputs.orphan_count != '0'
       shell: bash
@@ -159,8 +179,7 @@ runs:
         DOMAIN_LABEL_PATTERN:       ${{ inputs.domain-label-pattern }}
         SERVICE_PATTERN:            ${{ inputs.service-pattern }}
         DESTINATION_PATTERN:        ${{ inputs.destination-pattern }}
-        DATABASE_NAME_PATTERN:      ${{ inputs.database-name-pattern }}
-        BASE_DATABASE:              ${{ inputs.database-template }}
+        DATABASES:                  ${{ inputs.databases }}
         ENV_LABEL:                  ${{ inputs.env-label }}
         PREFIX_STRIP:               ${{ inputs.prefix-strip }}
         DATABASE_ENGINE:            ${{ inputs.database-engine }}
@@ -177,11 +196,17 @@ runs:
           cat orphans.txt
           exit 0
         fi
-        # We have to re-implement teardown inline here because composite
-        # actions can't loop with `uses:` calls per iteration. For each
-        # orphan slug, generate the destination, then call kamal app
-        # remove + drop the database via the same scripts the main flow
-        # uses (sourced from .kamal-previews/scripts/<engine>/).
+        # Composite actions can't loop with `uses:` calls per iteration, so
+        # we re-implement the teardown body here. For each orphan slug:
+        # generate the per-PR config (to learn destination + resolved DB
+        # targets), `kamal app remove`, drop each database, mark the
+        # GitHub deployment inactive.
+        if [ "$DATABASE_ENGINE" = "postgres" ] || [ "$DATABASE_ENGINE" = "mysql" ]; then
+          # shellcheck source=../.github/actions/lib/parse-db-url.sh
+          source "$(pwd)/.kamal-previews/.github/actions/lib/parse-db-url.sh"
+          kp_parse_db_url "$KAMAL_PREVIEWS_DB_ADMIN_URL"
+        fi
+
         while IFS= read -r slug; do
           echo "::group::Teardown for slug=$slug"
 
@@ -196,14 +221,21 @@ runs:
             --env-label "$ENV_LABEL"
             --prefix-strip "$PREFIX_STRIP"
           )
-          [ -n "$BASE_SECRETS_FILE" ]      && gen_args+=(--base-secrets-file "$BASE_SECRETS_FILE")
-          [ -n "$DATABASE_NAME_PATTERN" ]  && gen_args+=(--database-name-pattern "$DATABASE_NAME_PATTERN")
-          [ -n "$BASE_DATABASE" ]          && gen_args+=(--base-database "$BASE_DATABASE")
+          [ -n "$BASE_SECRETS_FILE" ] && gen_args+=(--base-secrets-file "$BASE_SECRETS_FILE")
+          if [ -n "$DATABASES" ]; then
+            while IFS= read -r line; do
+              stripped="${line#"${line%%[![:space:]]*}"}"
+              stripped="${stripped%"${stripped##*[![:space:]]}"}"
+              [ -z "$stripped" ] && continue
+              case "$stripped" in \#*) continue ;; esac
+              gen_args+=(--database "$stripped")
+            done <<< "$DATABASES"
+          fi
 
           summary="$(.kamal-previews/bin/kamal-previews "${gen_args[@]}")"
           dest="$(echo "$summary" | jq -r '.destination')"
-          db_name="$(echo "$summary" | jq -r '.database_name // empty')"
           db_slug="$(echo "$summary" | jq -r '.db_slug')"
+          databases_resolved="$(echo "$summary" | jq -r '.databases_resolved // empty')"
 
           # kamal app remove
           kamal lock release -d "$dest" || true
@@ -211,7 +243,7 @@ runs:
             echo "::warning::kamal app remove -d $dest exited non-zero — assuming already gone."
           fi
 
-          # drop database (if applicable)
+          # drop databases (if applicable)
           if [ "$DATABASE_ENGINE" != "none" ]; then
             scripts_dir="$(pwd)/.kamal-previews/scripts"
             ssh_target="${SSH_USER}@${DEPLOY_HOST}"
@@ -221,35 +253,45 @@ runs:
             scp "${scp_opts[@]}" -r "$scripts_dir/lib" "$ssh_target:$remote/"
             scp "${scp_opts[@]}" -r "$scripts_dir/$DATABASE_ENGINE" "$ssh_target:$remote/"
 
-            envfile="$(mktemp)"
             case "$DATABASE_ENGINE" in
-              postgres)
-                {
-                  printf 'PGHOST=%s\nPGPORT=%s\nPGUSER=%s\nPGPASSWORD=%s\n' \
-                    "${PG_HOST:-}" "${PG_PORT:-5432}" "${PG_USER:-}" "${PG_PASSWORD:-}"
-                  [ -n "${PG_SSLMODE:-}" ] && printf 'PGSSLMODE=%s\n' "$PG_SSLMODE"
-                  printf 'TARGET_DATABASE=%s\n' "$db_name"
-                } > "$envfile"
-                scp "${scp_opts[@]}" "$envfile" "$ssh_target:$remote/.env"
-                rm -f "$envfile"
-                ssh "${ssh_opts[@]}" "$ssh_target" \
-                  "docker run --rm --env-file '$remote/.env' --network host -v '$remote:/work:ro' postgres:16-alpine bash /work/postgres/drop.sh"
-                ;;
-              mysql)
-                {
-                  printf 'MYSQL_HOST=%s\nMYSQL_PORT=%s\nMYSQL_USER=%s\nMYSQL_PASSWORD=%s\n' \
-                    "${MYSQL_HOST:-}" "${MYSQL_PORT:-3306}" "${MYSQL_USER:-}" "${MYSQL_PASSWORD:-}"
-                  [ -n "${MYSQL_SSL_MODE:-}" ] && printf 'MYSQL_SSL_MODE=%s\n' "$MYSQL_SSL_MODE"
-                  printf 'TARGET_DATABASE=%s\n' "$db_name"
-                } > "$envfile"
-                scp "${scp_opts[@]}" "$envfile" "$ssh_target:$remote/.env"
-                rm -f "$envfile"
-                ssh "${ssh_opts[@]}" "$ssh_target" \
-                  "docker run --rm --env-file '$remote/.env' --network host -v '$remote:/work:ro' mysql:8.4 bash /work/mysql/drop.sh"
+              postgres|mysql)
+                while IFS= read -r entry; do
+                  [ -z "$entry" ] && continue
+                  rest="${entry#*=}"
+                  tgt="${rest#*:}"
+                  [ -z "$tgt" ] && continue
+                  envfile="$(mktemp)"
+                  case "$DATABASE_ENGINE" in
+                    postgres)
+                      {
+                        printf 'PGHOST=%s\nPGPORT=%s\nPGUSER=%s\nPGPASSWORD=%s\n' \
+                          "$KP_DB_HOST" "${KP_DB_PORT:-5432}" "$KP_DB_USER" "$KP_DB_PASSWORD"
+                        [ -n "${KP_DB_SSLMODE:-}" ] && printf 'PGSSLMODE=%s\n' "$KP_DB_SSLMODE"
+                        printf 'TARGET_DATABASE=%s\n' "$tgt"
+                      } > "$envfile"
+                      scp "${scp_opts[@]}" "$envfile" "$ssh_target:$remote/.env"
+                      ssh "${ssh_opts[@]}" "$ssh_target" \
+                        "docker run --rm --env-file '$remote/.env' --network host -v '$remote:/work:ro' postgres:16-alpine bash /work/postgres/drop.sh"
+                      ;;
+                    mysql)
+                      {
+                        printf 'MYSQL_HOST=%s\nMYSQL_PORT=%s\nMYSQL_USER=%s\nMYSQL_PASSWORD=%s\n' \
+                          "$KP_DB_HOST" "${KP_DB_PORT:-3306}" "$KP_DB_USER" "$KP_DB_PASSWORD"
+                        [ -n "${KP_DB_SSL_MODE:-}" ] && printf 'MYSQL_SSL_MODE=%s\n' "$KP_DB_SSL_MODE"
+                        printf 'TARGET_DATABASE=%s\n' "$tgt"
+                      } > "$envfile"
+                      scp "${scp_opts[@]}" "$envfile" "$ssh_target:$remote/.env"
+                      ssh "${ssh_opts[@]}" "$ssh_target" \
+                        "docker run --rm --env-file '$remote/.env' --network host -v '$remote:/work:ro' mysql:8.4 bash /work/mysql/drop.sh"
+                      ;;
+                  esac
+                  rm -f "$envfile"
+                done <<< "$databases_resolved"
                 ;;
               sqlite)
                 resolved="${SQLITE_PATTERN//\{slug\}/$slug}"
                 resolved="${resolved//\{db_slug\}/$db_slug}"
+                envfile="$(mktemp)"
                 {
                   printf 'TARGET_PATH=%s\n' "$resolved"
                   [ -n "${SQLITE_ALSO:-}" ] && printf 'ALSO_DROP=%s\n' "$SQLITE_ALSO"

@@ -26,8 +26,8 @@ defeat this.
 Mitigations, in order of preference:
 
 1. **Use a dedicated template database** that nothing else connects to,
-   refreshed from staging on a schedule. Point `database-template` at the
-   template, not at staging.
+   refreshed from staging on a schedule. Point each `databases:` entry's
+   source at the template, not at staging.
 
 2. **Lower the connection-reaping aggressiveness** of your staging app.
    Idle-in-transaction timeouts and connection lifetimes help.

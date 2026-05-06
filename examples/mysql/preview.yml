@@ -29,20 +29,19 @@ jobs:
 
       - uses: web-ascender/github-actions-kamal-previews@v1
         with:
-          base-deploy-file:        config/deploy.staging.yml
-          base-secrets-file:       .kamal/secrets.staging
-          domain-suffix:           preview.example.com
-          deploy-host:             staging.example.com
-          database-engine:         mysql
-          database-template:       myapp_staging
-          database-name-pattern:   "myapp_{db_slug}"
+          base-deploy-file:    config/deploy.staging.yml
+          base-secrets-file:   .kamal/secrets.staging
+          domain-suffix:       preview.example.com
+          deploy-host:         staging.example.com
+          database-engine:     mysql
+          databases: |
+            DATABASE_NAME=myapp_staging:myapp_{db_slug}
           image-tag: ${{ github.event.pull_request.head.sha }}
           memory-limit: "512m"
           cpu-limit:    "0.5"
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          MYSQL_HOST:      ${{ secrets.MYSQL_HOST }}
-          MYSQL_USER:      ${{ secrets.MYSQL_USER }}
-          MYSQL_PASSWORD:  ${{ secrets.MYSQL_PASSWORD }}
-          MYSQL_PORT:      ${{ secrets.MYSQL_PORT }}
-          MYSQL_SSL_MODE:  ${{ secrets.MYSQL_SSL_MODE }}
+          SSH_PRIVATE_KEY:    ${{ secrets.DEPLOY_SSH_KEY }}
+          RAILS_MASTER_KEY:   ${{ secrets.STAGING_MASTER_KEY }}
+          # Optional admin URL override when your app role lacks
+          # CREATE DATABASE privilege.
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}

@@ -18,9 +18,24 @@ module KamalPreviews
       :proxy_host,
       :service_name,
       :database_name,
+      :databases,
+      :databases_full,
       :env_label,
       keyword_init: true
     )
+
+    # One entry in the `databases:` list. Source is the existing template DB
+    # being cloned; pattern resolves to the per-PR target DB name. The
+    # resolved name is written to `env.clear[env_name]` so the consumer's
+    # secrets file can build its DB URL from it.
+    DatabaseSpec = Struct.new(:env_name, :source, :pattern, keyword_init: true) do
+      def resolve(slug:, db_slug:)
+        pattern
+          .gsub("{slug}", slug)
+          .gsub("{db_slug}", db_slug)
+          .gsub("{base_database}", source.to_s)
+      end
+    end
 
     class Error < KamalPreviews::Error; end
 
@@ -28,6 +43,39 @@ module KamalPreviews
     DEFAULT_SERVICE_PATTERN = "{base_service}-{slug}"
     DEFAULT_DESTINATION_PATTERN = "{slug}"
     DEFAULT_ENV_LABEL = "preview"
+    PRIMARY_DATABASE_ENV = "DATABASE_NAME"
+
+    # Parses one entry of the multi-line `databases:` input. Format:
+    #   ENV_NAME=source_db:target_pattern
+    # Whitespace around tokens is trimmed; blank lines and `#`-comments are
+    # skipped by the caller.
+    def self.parse_database_entry(entry)
+      raw = entry.to_s.strip
+      env_name, rest = raw.split("=", 2)
+      raise Error, "database entry missing `=` (got #{entry.inspect})" if env_name.nil? || rest.nil?
+      source, pattern = rest.split(":", 2)
+      raise Error, "database entry missing `:` separator between source and pattern (got #{entry.inspect})" if source.nil? || pattern.nil?
+      env_name = env_name.strip
+      source = source.strip
+      pattern = pattern.strip
+      raise Error, "database entry has empty env_name (got #{entry.inspect})" if env_name.empty?
+      raise Error, "database entry has empty source (got #{entry.inspect})" if source.empty?
+      raise Error, "database entry has empty pattern (got #{entry.inspect})" if pattern.empty?
+      DatabaseSpec.new(env_name: env_name, source: source, pattern: pattern)
+    end
+
+    # Parses a multi-line spec into an array of DatabaseSpec. Skips blank
+    # lines and `#`-prefixed comments.
+    def self.parse_databases(input)
+      return [] if input.nil?
+      lines = input.is_a?(Array) ? input : input.to_s.split(/\r?\n/)
+      lines.filter_map do |line|
+        stripped = line.to_s.strip
+        next if stripped.empty?
+        next if stripped.start_with?("#")
+        parse_database_entry(stripped)
+      end
+    end
 
     # @param namer_result [Namer::Result]
     # @param base_deploy_file [String] path to base Kamal deploy file (e.g. config/deploy.staging.yml)
@@ -36,8 +84,7 @@ module KamalPreviews
     # @param domain_label_pattern [String] pattern that becomes the leftmost DNS label. Default "{slug}".
     # @param service_pattern [String] template for the Kamal `service:` value. Tokens: {base_service}, {slug}, {db_slug}
     # @param destination_pattern [String] template for the Kamal destination (filename suffix). Same tokens.
-    # @param database_name_pattern [String, nil] template for the primary DB name; written as env.clear.DATABASE_NAME. Tokens: {base_database}, {slug}, {db_slug}. nil = don't write DATABASE_NAME.
-    # @param base_database [String, nil] used to expand {base_database} in the database pattern (typically the staging DB name)
+    # @param databases [Array<DatabaseSpec>, Array<String>, String] multi-line spec or array of entries; each entry "ENV_NAME=source:pattern". Each entry produces a clone+drop and an env.clear[ENV_NAME] = resolved-target write.
     # @param image_tag [String, nil] override `image:` tag (no tag = leave as-is)
     # @param env_label [String] applied to `labels.environment` and to env.clear.FEATURE_BRANCH_LABEL
     # @param env_overrides [Hash{String=>String}] extra key/value pairs merged into env.clear
@@ -54,8 +101,7 @@ module KamalPreviews
       domain_label_pattern: DEFAULT_DOMAIN_LABEL,
       service_pattern: DEFAULT_SERVICE_PATTERN,
       destination_pattern: DEFAULT_DESTINATION_PATTERN,
-      database_name_pattern: nil,
-      base_database: nil,
+      databases: [],
       image_tag: nil,
       env_label: DEFAULT_ENV_LABEL,
       env_overrides: {},
@@ -72,8 +118,7 @@ module KamalPreviews
       @domain_label_pattern = domain_label_pattern
       @service_pattern = service_pattern
       @destination_pattern = destination_pattern
-      @database_name_pattern = database_name_pattern
-      @base_database = base_database
+      @databases = normalize_databases(databases)
       @image_tag = image_tag
       @env_label = env_label
       @env_overrides = env_overrides || {}
@@ -94,14 +139,19 @@ module KamalPreviews
       service_name = expand(@service_pattern, base_service: base_service)
       domain_label = expand(@domain_label_pattern, base_service: base_service)
       proxy_host = "#{domain_label}.#{@domain_suffix}"
-      database_name = if @database_name_pattern
-        expand(@database_name_pattern, base_service: base_service, base_database: @base_database)
+
+      databases_resolved = {}
+      databases_full = []
+      @databases.each do |spec|
+        target = spec.resolve(slug: @namer_result.slug, db_slug: @namer_result.db_slug)
+        databases_resolved[spec.env_name] = target
+        databases_full << "#{spec.env_name}=#{spec.source}:#{target}"
       end
 
       mutated = mutate_yaml(base_yaml,
         service_name: service_name,
         proxy_host: proxy_host,
-        database_name: database_name)
+        databases_resolved: databases_resolved)
 
       deploy_file = "config/deploy.#{destination}.yml"
       FileUtils.mkdir_p(File.dirname(deploy_file))
@@ -115,12 +165,24 @@ module KamalPreviews
         secrets_file: secrets_file,
         proxy_host: proxy_host,
         service_name: service_name,
-        database_name: database_name,
+        database_name: databases_resolved[PRIMARY_DATABASE_ENV],
+        databases: databases_resolved,
+        databases_full: databases_full,
         env_label: @env_label
       )
     end
 
     private
+
+    def normalize_databases(databases)
+      case databases
+      when nil, "" then []
+      when Array
+        databases.map { |e| e.is_a?(DatabaseSpec) ? e : self.class.parse_database_entry(e) }
+      else
+        self.class.parse_databases(databases)
+      end
+    end
 
     def validate!
       unless File.exist?(@base_deploy_file)
@@ -129,9 +191,9 @@ module KamalPreviews
       if @base_secrets_file && !File.exist?(@base_secrets_file)
         raise Error, "Base secrets file not found: #{@base_secrets_file}"
       end
-      if @database_name_pattern&.include?("{base_database}") && (@base_database.nil? || @base_database.empty?)
-        raise Error, "database_name_pattern uses {base_database} but no base_database was provided"
-      end
+      env_names = @databases.map(&:env_name)
+      dupes = env_names.group_by(&:itself).select { |_, vs| vs.size > 1 }.keys
+      raise Error, "duplicate database env names: #{dupes.join(", ")}" if dupes.any?
       if @domain_suffix.empty?
         raise Error, "domain_suffix is required"
       end
@@ -151,15 +213,14 @@ module KamalPreviews
       data
     end
 
-    def expand(template, base_service: nil, base_database: nil)
+    def expand(template, base_service: nil)
       template
         .gsub("{slug}", @namer_result.slug)
         .gsub("{db_slug}", @namer_result.db_slug)
         .gsub("{base_service}", base_service.to_s)
-        .gsub("{base_database}", base_database.to_s)
     end
 
-    def mutate_yaml(yaml, service_name:, proxy_host:, database_name:)
+    def mutate_yaml(yaml, service_name:, proxy_host:, databases_resolved:)
       out = deep_dup(yaml)
 
       out["service"] = service_name
@@ -183,7 +244,7 @@ module KamalPreviews
       out["env"]["clear"]["FEATURE_BRANCH_LABEL"] = @env_label
       out["env"]["clear"]["FEATURE_BRANCH_SLUG"] = @namer_result.slug
       out["env"]["clear"]["FEATURE_BRANCH_DB_SLUG"] = @namer_result.db_slug
-      out["env"]["clear"]["DATABASE_NAME"] = database_name if database_name
+      databases_resolved.each { |k, v| out["env"]["clear"][k] = v }
       @env_overrides.each { |k, v| out["env"]["clear"][k.to_s] = v.to_s }
 
       if @env_secret_overrides.any?

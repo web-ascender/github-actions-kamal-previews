@@ -30,12 +30,14 @@ inputs:
     description: Pattern for the Kamal destination filename suffix. Default `{slug}`.
     required: false
     default: "{slug}"
-  database-name-pattern:
-    description: Pattern for env.clear.DATABASE_NAME. Tokens: `{slug}`, `{db_slug}`, `{base_database}`. Empty = don't write DATABASE_NAME.
-    required: false
-    default: ""
-  base-database:
-    description: Used to expand `{base_database}` in `database-name-pattern`.
+  databases:
+    description: |
+      Multi-line list of databases to clone and surface in the per-PR config.
+      Each line: `ENV_NAME=source_db:target_pattern`. Tokens in the pattern:
+      `{slug}`, `{db_slug}`, `{base_database}` (= source). Blank lines and
+      `#` comments are ignored. Example:
+        DATABASE_NAME=myapp_staging:myapp_{db_slug}
+        QUEUE_DATABASE_NAME=myapp_staging_queue:myapp_queue_{db_slug}
     required: false
     default: ""
   image-tag:
@@ -104,8 +106,14 @@ outputs:
     description: Kamal `service:` value used for the per-PR app.
     value: ${{ steps.run.outputs.service_name }}
   database_name:
-    description: Resolved DATABASE_NAME (empty if no `database-name-pattern` was given).
+    description: Resolved primary DATABASE_NAME (empty if no DATABASE_NAME entry was given). Convenience shortcut for the most-common case; multi-DB consumers read `databases_resolved` instead.
     value: ${{ steps.run.outputs.database_name }}
+  databases_resolved:
+    description: |
+      Multi-line `ENV_NAME=resolved_target_name` (one per database) — what
+      clone-database / drop-database loop over to clone and tear down each
+      database. Empty when no `databases:` were given.
+    value: ${{ steps.run.outputs.databases_resolved }}
   env_label:
     description: Echoes the env-label input.
     value: ${{ steps.run.outputs.env_label }}
@@ -132,8 +140,7 @@ runs:
         GH_DOMAIN_LABEL_PATTERN: ${{ inputs.domain-label-pattern }}
         GH_SERVICE_PATTERN: ${{ inputs.service-pattern }}
         GH_DESTINATION_PATTERN: ${{ inputs.destination-pattern }}
-        GH_DATABASE_NAME_PATTERN: ${{ inputs.database-name-pattern }}
-        GH_BASE_DATABASE: ${{ inputs.base-database }}
+        GH_DATABASES: ${{ inputs.databases }}
         GH_IMAGE_TAG: ${{ inputs.image-tag }}
         GH_ENV_LABEL: ${{ inputs.env-label }}
         GH_ENV_OVERRIDES: ${{ inputs.env-overrides }}
@@ -159,11 +166,15 @@ runs:
         if [ -n "$GH_BASE_SECRETS_FILE" ]; then
           cmd+=(--base-secrets-file "$GH_BASE_SECRETS_FILE")
         fi
-        if [ -n "$GH_DATABASE_NAME_PATTERN" ]; then
-          cmd+=(--database-name-pattern "$GH_DATABASE_NAME_PATTERN")
-        fi
-        if [ -n "$GH_BASE_DATABASE" ]; then
-          cmd+=(--base-database "$GH_BASE_DATABASE")
+        if [ -n "$GH_DATABASES" ]; then
+          # One --database flag per non-blank, non-comment line.
+          while IFS= read -r line; do
+            stripped="${line#"${line%%[![:space:]]*}"}"
+            stripped="${stripped%"${stripped##*[![:space:]]}"}"
+            [ -z "$stripped" ] && continue
+            case "$stripped" in \#*) continue ;; esac
+            cmd+=(--database "$stripped")
+          done <<< "$GH_DATABASES"
         fi
         if [ -n "$GH_IMAGE_TAG" ]; then
           cmd+=(--image-tag "$GH_IMAGE_TAG")
@@ -195,4 +206,25 @@ runs:
           done <<< "$GH_ENV_SECRET_OVERRIDES"
         fi
 
-        "${cmd[@]}"
+        # Run the CLI; pipe the JSON summary back into a variable so we can
+        # parse it for the GITHUB_ENV export below. The CLI also writes
+        # GITHUB_OUTPUT itself (so subsequent action steps can ${{ steps.run.outputs.* }}).
+        summary="$("${cmd[@]}")"
+        printf '%s\n' "$summary"
+
+        # Export resolved per-DB env vars to $GITHUB_ENV so later steps
+        # (kamal deploy → kamal secrets) can read $DATABASE_NAME etc. when
+        # building URLs in their own .kamal/secrets.<dest> file. Also re-
+        # exports static fields like SLUG / DB_SLUG / DESTINATION for the
+        # same reason.
+        databases_resolved="$(printf '%s' "$summary" | ruby -rjson -e 'puts JSON.parse(STDIN.read)["databases_resolved"].to_s')"
+        if [ -n "$databases_resolved" ]; then
+          while IFS= read -r entry; do
+            [ -z "$entry" ] && continue
+            # Format: ENV_NAME=source:target — strip source: from the value.
+            name="${entry%%=*}"
+            rest="${entry#*=}"
+            target="${rest#*:}"
+            printf '%s=%s\n' "$name" "$target" >> "$GITHUB_ENV"
+          done <<< "$databases_resolved"
+        fi

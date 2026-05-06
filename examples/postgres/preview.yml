@@ -6,10 +6,12 @@
 # naturally.
 #
 # Repo-level GitHub Actions secrets the workflow expects:
-#   DEPLOY_SSH_KEY    — SSH key for the deploy host (Kamal's key).
-#   PG_HOST/USER/PASSWORD — DB admin creds (CREATEDB privilege).
+#   DEPLOY_SSH_KEY      — SSH key for the deploy host (Kamal's key).
+#   STAGING_MASTER_KEY  — Rails master key, only if your secrets file
+#                          shells out to `bin/rails credentials:fetch`.
+#   DATABASE_ADMIN_URL  — only if your staging app role lacks CREATEDB.
 #   VPN_PRIVATE_KEY/VPN_PUBLIC_KEY — WireGuard credentials (only if your
-#                        deploy host is on a private network).
+#                          deploy host is on a private network).
 
 name: Preview environment
 
@@ -52,13 +54,20 @@ jobs:
       - name: Deploy / teardown preview
         uses: web-ascender/github-actions-kamal-previews@v1
         with:
-          base-deploy-file:        config/deploy.staging.yml
-          base-secrets-file:       .kamal/secrets.staging
-          domain-suffix:           preview.example.com
-          deploy-host:             staging.example.com
-          database-engine:         postgres
-          database-template:       myapp_staging
-          database-name-pattern:   "myapp_{db_slug}"
+          base-deploy-file:    config/deploy.staging.yml
+          base-secrets-file:   .kamal/secrets.staging
+          domain-suffix:       preview.example.com
+          deploy-host:         staging.example.com
+          database-engine:     postgres
+
+          # One entry per database. Each becomes a clone-on-deploy, an
+          # env.clear[ENV_NAME] write, a $ENV_NAME runner-env export
+          # (visible to .kamal/secrets.* shell evaluation), and a drop on
+          # teardown. For Rails 8 multi-DB apps, list each Solid database:
+          databases: |
+            DATABASE_NAME=myapp_staging:myapp_{db_slug}
+            # QUEUE_DATABASE_NAME=myapp_staging_queue:myapp_queue_{db_slug}
+            # CACHE_DATABASE_NAME=myapp_staging_cache:myapp_cache_{db_slug}
 
           # Optional: tag the per-PR image with the head SHA.
           image-tag: ${{ github.event.pull_request.head.sha }}
@@ -73,9 +82,13 @@ jobs:
         env:
           # Composite actions can't read `secrets.X` directly — forward the
           # ones we need via `env:`. Keep these tightly scoped to this step.
-          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          PG_HOST:         ${{ secrets.PG_HOST }}
-          PG_USER:         ${{ secrets.PG_USER }}
-          PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
-          PG_PORT:         ${{ secrets.PG_PORT }}
-          PG_SSLMODE:      ${{ secrets.PG_SSLMODE }}
+          SSH_PRIVATE_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
+
+          # Required if .kamal/secrets.staging shells out to
+          # `bin/rails credentials:fetch` to populate DATABASE_URL.
+          RAILS_MASTER_KEY: ${{ secrets.STAGING_MASTER_KEY }}
+
+          # Optional override: provide an admin URL with CREATEDB if the
+          # URL exposed by your secrets file connects as a least-privilege
+          # role. Format: postgres://admin:secret@host:5432/postgres?sslmode=verify-full
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}

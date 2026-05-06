@@ -24,15 +24,18 @@ description: |
 
             - uses: web-ascender/github-actions-kamal-previews@v1
               with:
-                base-deploy-file: config/deploy.staging.yml
-                domain-suffix:    preview.example.com
-                deploy-host:      staging.example.com
-                ...
+                base-deploy-file:    config/deploy.staging.yml
+                base-secrets-file:   .kamal/secrets.staging
+                domain-suffix:       preview.example.com
+                deploy-host:         staging.example.com
+                database-engine:     postgres
+                databases: |
+                  DATABASE_NAME=myapp_staging:myapp_{db_slug}
               env:
-                SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-                PG_HOST:         ${{ secrets.PG_HOST }}
-                PG_USER:         ${{ secrets.PG_USER }}
-                PG_PASSWORD:     ${{ secrets.PG_PASSWORD }}
+                SSH_PRIVATE_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
+                # Required only if the secrets file shells out to
+                # `bin/rails credentials:fetch` to populate DATABASE_URL.
+                RAILS_MASTER_KEY: ${{ secrets.STAGING_MASTER_KEY }}
 
   Internally dispatches based on the triggering event:
     - pull_request opened/synchronize/reopened   → deploy
@@ -57,8 +60,32 @@ inputs:
   deploy-host:                { required: true }
 
   database-engine:            { required: false, default: none }
-  database-template:          { required: false, default: "" }
-  database-name-pattern:      { required: false, default: "" }
+  databases:
+    description: |
+      Multi-line list of databases to clone (postgres/mysql only). One entry
+      per line, format `ENV_NAME=source_db:target_pattern`. Tokens in the
+      pattern: `{slug}`, `{db_slug}`, `{base_database}` (= source).
+      Each entry produces a clone-on-deploy, an `env.clear[ENV_NAME]` entry
+      with the resolved target name, an `$ENV_NAME` runner env export (so
+      kamal's secrets-file evaluation can use it), and a drop-on-teardown.
+      Example:
+        DATABASE_NAME=myapp_staging:myapp_{db_slug}
+        QUEUE_DATABASE_NAME=myapp_staging_queue:myapp_queue_{db_slug}
+        CACHE_DATABASE_NAME=myapp_staging_cache:myapp_cache_{db_slug}
+    required: false
+    default: ""
+  database-admin-url-var:
+    description: |
+      Name of the variable in `base-secrets-file` to source as the admin
+      connection URL for cloning. Default: `DATABASE_URL`. Ignored when the
+      runner env already has `DATABASE_ADMIN_URL` set, or when no base
+      secrets file is configured. The fallback chain is:
+        1. `DATABASE_ADMIN_URL` env var (explicit override).
+        2. The `<database-admin-url-var>` variable read from
+           `base-secrets-file` (e.g. `bin/rails credentials:fetch ...`).
+        3. Individual `PG_*` / `MYSQL_*` env vars (last-resort fallback).
+    required: false
+    default: "DATABASE_URL"
 
   sqlite-source-path:         { required: false, default: "" }
   sqlite-target-path-pattern: { required: false, default: "" }
@@ -207,8 +234,7 @@ runs:
         domain-label-pattern: ${{ inputs.domain-label-pattern }}
         service-pattern: ${{ inputs.service-pattern }}
         destination-pattern: ${{ inputs.destination-pattern }}
-        database-name-pattern: ${{ inputs.database-name-pattern }}
-        base-database: ${{ inputs.database-template }}
+        databases: ${{ inputs.databases }}
         image-tag: ${{ inputs.image-tag }}
         env-label: ${{ inputs.env-label }}
         env-overrides: ${{ inputs.env-overrides }}
@@ -218,6 +244,74 @@ runs:
         memory-limit: ${{ inputs.memory-limit }}
         cpu-limit: ${{ inputs.cpu-limit }}
         prefix-strip: ${{ inputs.prefix-strip }}
+
+    # ── Resolve admin URL for cloning (postgres/mysql only) ─────────────
+    # Source the secrets file once and pull DATABASE_URL (or whatever var
+    # the consumer named). Falls back to individual PG_/MYSQL_ env vars.
+    # Sets KAMAL_PREVIEWS_DB_ADMIN_URL on the runner env, also exporting it
+    # to $GITHUB_ENV so the resolved DB names that get appended later land
+    # in the same env table.
+    - id: db_admin_url
+      if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true' && (inputs.database-engine == 'postgres' || inputs.database-engine == 'mysql')
+      shell: bash
+      env:
+        EXPLICIT_URL: ${{ env.DATABASE_ADMIN_URL }}
+        BASE_SECRETS_FILE: ${{ inputs.base-secrets-file }}
+        VAR_NAME: ${{ inputs.database-admin-url-var }}
+        ENGINE: ${{ inputs.database-engine }}
+        FB_PG_HOST: ${{ env.PG_HOST }}
+        FB_PG_PORT: ${{ env.PG_PORT }}
+        FB_PG_USER: ${{ env.PG_USER }}
+        FB_PG_PASSWORD: ${{ env.PG_PASSWORD }}
+        FB_PG_SSLMODE: ${{ env.PG_SSLMODE }}
+        FB_MYSQL_HOST: ${{ env.MYSQL_HOST }}
+        FB_MYSQL_PORT: ${{ env.MYSQL_PORT }}
+        FB_MYSQL_USER: ${{ env.MYSQL_USER }}
+        FB_MYSQL_PASSWORD: ${{ env.MYSQL_PASSWORD }}
+        FB_MYSQL_SSL_MODE: ${{ env.MYSQL_SSL_MODE }}
+      run: |
+        set -euo pipefail
+
+        url=""
+        if [ -n "${EXPLICIT_URL:-}" ]; then
+          url="$EXPLICIT_URL"
+        elif [ -n "$BASE_SECRETS_FILE" ] && [ -f "$BASE_SECRETS_FILE" ]; then
+          # Source in a subshell so the consumer's secrets file (which may
+          # shell out to `bin/rails credentials:fetch` etc.) doesn't pollute
+          # *our* env. Then read the named var.
+          url="$(set -a; . "$BASE_SECRETS_FILE"; set +a; printf '%s' "${!VAR_NAME-}")"
+        fi
+
+        if [ -z "$url" ]; then
+          # Last-resort: build from individual fields.
+          case "$ENGINE" in
+            postgres)
+              if [ -n "${FB_PG_HOST:-}" ] && [ -n "${FB_PG_USER:-}" ]; then
+                pp=""; [ -n "${FB_PG_PASSWORD:-}" ] && pp=":$FB_PG_PASSWORD"
+                port="${FB_PG_PORT:-5432}"
+                qs=""; [ -n "${FB_PG_SSLMODE:-}" ] && qs="?sslmode=$FB_PG_SSLMODE"
+                url="postgres://${FB_PG_USER}${pp}@${FB_PG_HOST}:${port}/postgres${qs}"
+              fi
+              ;;
+            mysql)
+              if [ -n "${FB_MYSQL_HOST:-}" ] && [ -n "${FB_MYSQL_USER:-}" ]; then
+                pp=""; [ -n "${FB_MYSQL_PASSWORD:-}" ] && pp=":$FB_MYSQL_PASSWORD"
+                port="${FB_MYSQL_PORT:-3306}"
+                qs=""; [ -n "${FB_MYSQL_SSL_MODE:-}" ] && qs="?ssl-mode=$FB_MYSQL_SSL_MODE"
+                url="mysql://${FB_MYSQL_USER}${pp}@${FB_MYSQL_HOST}:${port}/mysql${qs}"
+              fi
+              ;;
+          esac
+        fi
+
+        if [ -z "$url" ]; then
+          echo "::error::Could not resolve a database admin URL. Set DATABASE_ADMIN_URL in env, point base-secrets-file at a file that exposes \$${VAR_NAME}, or provide PG_/MYSQL_ env vars."; exit 1
+        fi
+
+        # Mask in logs and pass forward via GITHUB_ENV (not stdout/outputs —
+        # the URL contains credentials).
+        echo "::add-mask::$url"
+        echo "KAMAL_PREVIEWS_DB_ADMIN_URL=$url" >> "$GITHUB_ENV"
 
     - id: sqlite_path
       if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true' && inputs.database-engine == 'sqlite'
@@ -257,18 +351,8 @@ runs:
         host: ${{ inputs.deploy-host }}
         ssh-user: ${{ inputs.ssh-user }}
         ssh-port: ${{ inputs.ssh-port }}
-        pg-host: ${{ env.PG_HOST }}
-        pg-port: ${{ env.PG_PORT }}
-        pg-user: ${{ env.PG_USER }}
-        pg-password: ${{ env.PG_PASSWORD }}
-        pg-sslmode: ${{ env.PG_SSLMODE }}
-        mysql-host: ${{ env.MYSQL_HOST }}
-        mysql-port: ${{ env.MYSQL_PORT }}
-        mysql-user: ${{ env.MYSQL_USER }}
-        mysql-password: ${{ env.MYSQL_PASSWORD }}
-        mysql-ssl-mode: ${{ env.MYSQL_SSL_MODE }}
-        source-database: ${{ inputs.database-template }}
-        target-database: ${{ steps.config.outputs.database_name }}
+        admin-url: ${{ env.KAMAL_PREVIEWS_DB_ADMIN_URL }}
+        databases: ${{ steps.config.outputs.databases_resolved }}
         sqlite-source-path: ${{ inputs.sqlite-source-path }}
         sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
         sqlite-also-clone: ${{ inputs.sqlite-also-clone }}
@@ -319,17 +403,8 @@ runs:
         host: ${{ inputs.deploy-host }}
         ssh-user: ${{ inputs.ssh-user }}
         ssh-port: ${{ inputs.ssh-port }}
-        pg-host: ${{ env.PG_HOST }}
-        pg-port: ${{ env.PG_PORT }}
-        pg-user: ${{ env.PG_USER }}
-        pg-password: ${{ env.PG_PASSWORD }}
-        pg-sslmode: ${{ env.PG_SSLMODE }}
-        mysql-host: ${{ env.MYSQL_HOST }}
-        mysql-port: ${{ env.MYSQL_PORT }}
-        mysql-user: ${{ env.MYSQL_USER }}
-        mysql-password: ${{ env.MYSQL_PASSWORD }}
-        mysql-ssl-mode: ${{ env.MYSQL_SSL_MODE }}
-        target-database: ${{ steps.config.outputs.database_name }}
+        admin-url: ${{ env.KAMAL_PREVIEWS_DB_ADMIN_URL }}
+        databases: ${{ steps.config.outputs.databases_resolved }}
         sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
         sqlite-also-drop: ${{ inputs.sqlite-also-clone }}
 

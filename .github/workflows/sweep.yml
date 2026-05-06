@@ -25,8 +25,8 @@
 #         domain-suffix: preview.example.com
 #         deploy-host: deploy.example.com
 #         database-engine: postgres
-#         database-template: myapp_staging
-#         database-name-pattern: "myapp_{db_slug}"
+#         databases: |
+#           DATABASE_NAME=myapp_staging:myapp_{db_slug}
 #         environment-prefix: preview-
 #       secrets: inherit
 
@@ -39,8 +39,8 @@ on:
       domain-suffix:           { type: string, required: true }
       deploy-host:             { type: string, required: true }
       database-engine:         { type: string, default: none }
-      database-template:      { type: string, default: "" }
-      database-name-pattern:   { type: string, default: "" }
+      databases:               { type: string, default: "" }
+      database-admin-url-var:  { type: string, default: "DATABASE_URL" }
       sqlite-target-path-pattern: { type: string, default: "" }
       sqlite-also-clone:       { type: string, default: "" }
       base-secrets-file:       { type: string, default: "" }
@@ -66,17 +66,9 @@ on:
         default: "false"
 
     secrets:
-      SSH_PRIVATE_KEY:    { required: true }
-      PG_HOST:            { required: false }
-      PG_PORT:            { required: false }
-      PG_USER:            { required: false }
-      PG_PASSWORD:        { required: false }
-      PG_SSLMODE:         { required: false }
-      MYSQL_HOST:         { required: false }
-      MYSQL_PORT:         { required: false }
-      MYSQL_USER:         { required: false }
-      MYSQL_PASSWORD:     { required: false }
-      MYSQL_SSL_MODE:     { required: false }
+      SSH_PRIVATE_KEY:     { required: true }
+      DATABASE_ADMIN_URL:  { required: false }
+      RAILS_MASTER_KEY:    { required: false }
 
 permissions:
   contents: read
@@ -203,10 +195,30 @@ jobs:
           domain-label-pattern: ${{ inputs.domain-label-pattern }}
           service-pattern: ${{ inputs.service-pattern }}
           destination-pattern: ${{ inputs.destination-pattern }}
-          database-name-pattern: ${{ inputs.database-name-pattern }}
-          base-database: ${{ inputs.database-template }}
+          databases: ${{ inputs.databases }}
           env-label: ${{ inputs.env-label }}
           prefix-strip: ${{ inputs.prefix-strip }}
+
+      - id: db_admin_url
+        if: inputs.database-engine == 'postgres' || inputs.database-engine == 'mysql'
+        env:
+          EXPLICIT_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+          BASE_SECRETS_FILE: ${{ inputs.base-secrets-file }}
+          VAR_NAME: ${{ inputs.database-admin-url-var }}
+          RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+        run: |
+          set -euo pipefail
+          url=""
+          if [ -n "${EXPLICIT_URL:-}" ]; then
+            url="$EXPLICIT_URL"
+          elif [ -n "$BASE_SECRETS_FILE" ] && [ -f "$BASE_SECRETS_FILE" ]; then
+            url="$(set -a; . "$BASE_SECRETS_FILE"; set +a; printf '%s' "${!VAR_NAME-}")"
+          fi
+          if [ -z "$url" ]; then
+            echo "::error::Could not resolve a database admin URL for sweep teardown."; exit 1
+          fi
+          echo "::add-mask::$url"
+          echo "KAMAL_PREVIEWS_DB_ADMIN_URL=$url" >> "$GITHUB_ENV"
 
       - id: sqlite_path
         if: inputs.database-engine == 'sqlite'
@@ -232,17 +244,8 @@ jobs:
           host: ${{ inputs.deploy-host }}
           ssh-user: ${{ inputs.ssh-user }}
           ssh-port: ${{ inputs.ssh-port }}
-          pg-host: ${{ secrets.PG_HOST }}
-          pg-port: ${{ secrets.PG_PORT }}
-          pg-user: ${{ secrets.PG_USER }}
-          pg-password: ${{ secrets.PG_PASSWORD }}
-          pg-sslmode: ${{ secrets.PG_SSLMODE }}
-          mysql-host: ${{ secrets.MYSQL_HOST }}
-          mysql-port: ${{ secrets.MYSQL_PORT }}
-          mysql-user: ${{ secrets.MYSQL_USER }}
-          mysql-password: ${{ secrets.MYSQL_PASSWORD }}
-          mysql-ssl-mode: ${{ secrets.MYSQL_SSL_MODE }}
-          target-database: ${{ steps.config.outputs.database_name }}
+          admin-url: ${{ env.KAMAL_PREVIEWS_DB_ADMIN_URL }}
+          databases: ${{ steps.config.outputs.databases_resolved }}
           sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
           sqlite-also-drop: ${{ inputs.sqlite-also-clone }}
 
