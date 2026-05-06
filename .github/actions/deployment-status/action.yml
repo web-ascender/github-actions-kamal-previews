@@ -1,0 +1,112 @@
+name: feature-deploys / deployment-status
+description: |
+  Creates or updates a GitHub Deployment so the PR shows the native
+  "View deployment" button. On `created`, marks the deployment in_progress,
+  then transitions to `success` or `failure`. On `removed`, transitions
+  the deployment to `inactive`.
+
+inputs:
+  state:
+    description: One of `created`, `success`, `failure`, `removed`.
+    required: true
+  environment-name:
+    description: Environment name (must be unique per preview app — typically `preview-<slug>`).
+    required: true
+  url:
+    description: Environment URL (only meaningful when state is `success`).
+    required: false
+    default: ""
+  ref:
+    description: Git ref for the deployment. Default = the PR head SHA when available.
+    required: false
+    default: ""
+  github-token:
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  deployment_id:
+    description: ID of the created or located deployment.
+    value: ${{ steps.run.outputs.deployment_id }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        STATE: ${{ inputs.state }}
+        ENVIRONMENT: ${{ inputs.environment-name }}
+        URL: ${{ inputs.url }}
+        REF_INPUT: ${{ inputs.ref }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+
+        ref="${REF_INPUT:-${EVENT_HEAD_SHA:-$GITHUB_SHA}}"
+
+        find_deployment() {
+          gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GH_REPO/deployments?environment=$ENVIRONMENT&per_page=1" \
+            --jq '.[0].id // empty'
+        }
+
+        case "$STATE" in
+          created)
+            deployment_id="$(gh api --method POST \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/$GH_REPO/deployments" \
+              -f ref="$ref" \
+              -f environment="$ENVIRONMENT" \
+              -F transient_environment=true \
+              -F auto_inactive=true \
+              -F required_contexts:='[]' \
+              -f description="feature-deploys preview environment" \
+              --jq '.id')"
+            gh api --method POST -H 'Accept: application/vnd.github+json' \
+              "/repos/$GH_REPO/deployments/$deployment_id/statuses" \
+              -f state=in_progress \
+              -f description="Deploying…" >/dev/null
+            ;;
+          success|failure)
+            deployment_id="$(find_deployment)"
+            if [ -z "$deployment_id" ]; then
+              # If creation never happened (e.g. fast-fail before creation step),
+              # fall back to making one now to avoid an orphaned PR view.
+              deployment_id="$(gh api --method POST \
+                -H 'Accept: application/vnd.github+json' \
+                "/repos/$GH_REPO/deployments" \
+                -f ref="$ref" \
+                -f environment="$ENVIRONMENT" \
+                -F transient_environment=true \
+                -F auto_inactive=true \
+                -F required_contexts:='[]' \
+                --jq '.id')"
+            fi
+            extra=()
+            [ -n "$URL" ] && extra+=(-f environment_url="$URL" -f log_url="$URL")
+            gh api --method POST -H 'Accept: application/vnd.github+json' \
+              "/repos/$GH_REPO/deployments/$deployment_id/statuses" \
+              -f state="$STATE" \
+              -f description="Deployment $STATE" \
+              "${extra[@]}" >/dev/null
+            ;;
+          removed)
+            deployment_id="$(find_deployment)"
+            if [ -z "$deployment_id" ]; then
+              echo "No deployment for environment $ENVIRONMENT — nothing to mark inactive."
+              echo "deployment_id=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            gh api --method POST -H 'Accept: application/vnd.github+json' \
+              "/repos/$GH_REPO/deployments/$deployment_id/statuses" \
+              -f state=inactive \
+              -f description="Deployment torn down" >/dev/null
+            ;;
+          *)
+            echo "Unknown state: $STATE"; exit 1 ;;
+        esac
+
+        echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"

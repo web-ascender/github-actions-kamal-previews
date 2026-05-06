@@ -1,0 +1,39 @@
+name: feature-deploys / deploy
+description: |
+  Runs `kamal deploy -d <destination>`. Releases any stale lock first to
+  recover from previously interrupted deploys (Kamal's lock is a per-app
+  flag in /var/lock — broken locks are common when GH Actions cancels a
+  run mid-deploy).
+
+inputs:
+  destination:
+    description: Kamal destination identifier (matches the suffix of `config/deploy.<destination>.yml`).
+    required: true
+  skip-push:
+    description: Pass `--skip-push` to `kamal deploy` (image already exists in registry).
+    required: false
+    default: "false"
+  release-stale-lock:
+    description: Whether to run `kamal lock release -d <destination>` before deploy. Default true.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.release-stale-lock == 'true'
+      shell: bash
+      env:
+        DEST: ${{ inputs.destination }}
+      # `kamal lock release` may fail if there's no lock — that's fine.
+      run: kamal lock release -d "$DEST" || true
+
+    - shell: bash
+      env:
+        DEST: ${{ inputs.destination }}
+        SKIP_PUSH: ${{ inputs.skip-push }}
+      run: |
+        set -euo pipefail
+        args=(deploy -d "$DEST")
+        if [ "$SKIP_PUSH" = "true" ]; then args+=(--skip-push); fi
+        kamal "${args[@]}"

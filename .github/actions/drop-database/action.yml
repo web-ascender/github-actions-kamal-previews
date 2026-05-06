@@ -1,0 +1,162 @@
+name: feature-deploys / drop-database
+description: |
+  Drops the per-PR database during teardown. Mirrors the inputs of
+  `clone-database`.
+
+inputs:
+  engine:
+    description: One of `postgres`, `mysql`, `sqlite`.
+    required: true
+  host:
+    description: SSH host (typically the Kamal deploy host).
+    required: true
+  ssh-user:
+    required: false
+    default: deploy
+  ssh-port:
+    required: false
+    default: "22"
+  docker-image:
+    description: Docker image with the right client tools. Defaults to `postgres:16-alpine` (postgres) or `mysql:8.4` (mysql). Ignored for sqlite.
+    required: false
+    default: ""
+
+  pg-host: { required: false, default: "" }
+  pg-port: { required: false, default: "5432" }
+  pg-user: { required: false, default: "" }
+  pg-password: { required: false, default: "" }
+  pg-sslmode: { required: false, default: "" }
+
+  mysql-host: { required: false, default: "" }
+  mysql-port: { required: false, default: "3306" }
+  mysql-user: { required: false, default: "" }
+  mysql-password: { required: false, default: "" }
+  mysql-ssl-mode: { required: false, default: "" }
+
+  sqlite-target-path:
+    description: Absolute path on the deploy host to the SQLite file to remove.
+    required: false
+    default: ""
+  sqlite-also-drop:
+    description: Space-separated suffixes for companion DB files to also drop.
+    required: false
+    default: ""
+
+  target-database:
+    description: Database name to drop. Required for postgres/mysql.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - id: validate
+      shell: bash
+      env:
+        INPUT_ENGINE: ${{ inputs.engine }}
+        INPUT_HOST: ${{ inputs.host }}
+        INPUT_TARGET_DATABASE: ${{ inputs.target-database }}
+        INPUT_SQLITE_TARGET_PATH: ${{ inputs.sqlite-target-path }}
+      run: |
+        set -euo pipefail
+        case "$INPUT_ENGINE" in postgres|mysql|sqlite) ;; *) echo "bad engine"; exit 1;; esac
+        [ -z "$INPUT_HOST" ] && { echo "host is required"; exit 1; }
+        case "$INPUT_ENGINE" in
+          postgres|mysql)
+            [ -z "$INPUT_TARGET_DATABASE" ] && { echo "target-database is required"; exit 1; } ;;
+          sqlite)
+            [ -z "$INPUT_SQLITE_TARGET_PATH" ] && { echo "sqlite-target-path is required"; exit 1; } ;;
+        esac
+
+    - id: drop
+      shell: bash
+      env:
+        INPUT_ENGINE: ${{ inputs.engine }}
+        INPUT_HOST: ${{ inputs.host }}
+        INPUT_SSH_USER: ${{ inputs.ssh-user }}
+        INPUT_SSH_PORT: ${{ inputs.ssh-port }}
+        INPUT_DOCKER_IMAGE: ${{ inputs.docker-image }}
+        INPUT_PG_HOST: ${{ inputs.pg-host }}
+        INPUT_PG_PORT: ${{ inputs.pg-port }}
+        INPUT_PG_USER: ${{ inputs.pg-user }}
+        INPUT_PG_PASSWORD: ${{ inputs.pg-password }}
+        INPUT_PG_SSLMODE: ${{ inputs.pg-sslmode }}
+        INPUT_MYSQL_HOST: ${{ inputs.mysql-host }}
+        INPUT_MYSQL_PORT: ${{ inputs.mysql-port }}
+        INPUT_MYSQL_USER: ${{ inputs.mysql-user }}
+        INPUT_MYSQL_PASSWORD: ${{ inputs.mysql-password }}
+        INPUT_MYSQL_SSL_MODE: ${{ inputs.mysql-ssl-mode }}
+        INPUT_TARGET_DATABASE: ${{ inputs.target-database }}
+        INPUT_SQLITE_TARGET_PATH: ${{ inputs.sqlite-target-path }}
+        INPUT_SQLITE_ALSO_DROP: ${{ inputs.sqlite-also-drop }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        scripts_dir="$(cd "$ACTION_PATH/../../../scripts" && pwd)"
+
+        ssh_target="${INPUT_SSH_USER}@${INPUT_HOST}"
+        ssh_opts=(-o StrictHostKeyChecking=accept-new -p "${INPUT_SSH_PORT}")
+        scp_opts=(-o StrictHostKeyChecking=accept-new -P "${INPUT_SSH_PORT}")
+
+        docker_image="$INPUT_DOCKER_IMAGE"
+        if [ -z "$docker_image" ]; then
+          case "$INPUT_ENGINE" in
+            postgres) docker_image="postgres:16-alpine" ;;
+            mysql) docker_image="mysql:8.4" ;;
+          esac
+        fi
+
+        remote_dir="$(ssh "${ssh_opts[@]}" "$ssh_target" 'mktemp -d')"
+        cleanup() { ssh "${ssh_opts[@]}" "$ssh_target" "rm -rf '$remote_dir'" || true; }
+        trap cleanup EXIT
+
+        scp "${scp_opts[@]}" -r "$scripts_dir/lib" "$ssh_target:$remote_dir/"
+        scp "${scp_opts[@]}" -r "$scripts_dir/$INPUT_ENGINE" "$ssh_target:$remote_dir/"
+
+        local_env="$(mktemp)"
+        case "$INPUT_ENGINE" in
+          postgres)
+            {
+              printf 'PGHOST=%s\n' "$INPUT_PG_HOST"
+              printf 'PGPORT=%s\n' "$INPUT_PG_PORT"
+              printf 'PGUSER=%s\n' "$INPUT_PG_USER"
+              printf 'PGPASSWORD=%s\n' "$INPUT_PG_PASSWORD"
+              [ -n "$INPUT_PG_SSLMODE" ] && printf 'PGSSLMODE=%s\n' "$INPUT_PG_SSLMODE"
+              printf 'TARGET_DATABASE=%s\n' "$INPUT_TARGET_DATABASE"
+            } > "$local_env"
+            ;;
+          mysql)
+            {
+              printf 'MYSQL_HOST=%s\n' "$INPUT_MYSQL_HOST"
+              printf 'MYSQL_PORT=%s\n' "$INPUT_MYSQL_PORT"
+              printf 'MYSQL_USER=%s\n' "$INPUT_MYSQL_USER"
+              printf 'MYSQL_PASSWORD=%s\n' "$INPUT_MYSQL_PASSWORD"
+              [ -n "$INPUT_MYSQL_SSL_MODE" ] && printf 'MYSQL_SSL_MODE=%s\n' "$INPUT_MYSQL_SSL_MODE"
+              printf 'TARGET_DATABASE=%s\n' "$INPUT_TARGET_DATABASE"
+            } > "$local_env"
+            ;;
+          sqlite)
+            {
+              printf 'TARGET_PATH=%s\n' "$INPUT_SQLITE_TARGET_PATH"
+              [ -n "$INPUT_SQLITE_ALSO_DROP" ] && printf 'ALSO_DROP=%s\n' "$INPUT_SQLITE_ALSO_DROP"
+            } > "$local_env"
+            ;;
+        esac
+        scp "${scp_opts[@]}" "$local_env" "$ssh_target:$remote_dir/.env"
+        rm -f "$local_env"
+
+        case "$INPUT_ENGINE" in
+          postgres|mysql)
+            ssh "${ssh_opts[@]}" "$ssh_target" \
+              "docker run --rm \
+                 --env-file '$remote_dir/.env' \
+                 --network host \
+                 -v '$remote_dir:/work:ro' \
+                 '$docker_image' \
+                 bash /work/$INPUT_ENGINE/drop.sh"
+            ;;
+          sqlite)
+            ssh "${ssh_opts[@]}" "$ssh_target" \
+              "set -a && . '$remote_dir/.env' && set +a && bash '$remote_dir/sqlite/drop.sh'"
+            ;;
+        esac

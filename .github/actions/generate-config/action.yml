@@ -1,0 +1,182 @@
+name: feature-deploys / generate-config
+description: |
+  Sanitizes the branch name into url + db slugs, then writes a per-PR Kamal
+  destination file (config/deploy.<slug>.yml) and copies the matching secrets
+  file from the supplied base files. Wraps `bin/feature-deploys generate`.
+
+inputs:
+  branch-name:
+    description: Source branch name (typically `${{ github.head_ref }}` or `${{ github.event.ref }}`).
+    required: true
+  base-deploy-file:
+    description: Path to the base Kamal deploy file (e.g. config/deploy.staging.yml).
+    required: true
+  base-secrets-file:
+    description: Path to the base Kamal secrets file (e.g. .kamal/secrets.staging). Optional.
+    required: false
+    default: ""
+  domain-suffix:
+    description: e.g. `preview.example.com` — final host = `<slug>.<domain-suffix>`.
+    required: true
+  domain-label-pattern:
+    description: Pattern for the leftmost DNS label. Default `{slug}`.
+    required: false
+    default: "{slug}"
+  service-pattern:
+    description: Pattern for Kamal `service:`. Default `{base_service}-{slug}`.
+    required: false
+    default: "{base_service}-{slug}"
+  destination-pattern:
+    description: Pattern for the Kamal destination filename suffix. Default `{slug}`.
+    required: false
+    default: "{slug}"
+  database-name-pattern:
+    description: Pattern for env.clear.DATABASE_NAME. Tokens: `{slug}`, `{db_slug}`, `{base_database}`. Empty = don't write DATABASE_NAME.
+    required: false
+    default: ""
+  base-database:
+    description: Used to expand `{base_database}` in `database-name-pattern`.
+    required: false
+    default: ""
+  image-tag:
+    description: Optional override for the image tag (e.g. the commit SHA).
+    required: false
+    default: ""
+  env-label:
+    description: Value written to `labels.environment` and FEATURE_BRANCH_LABEL. Default `preview`.
+    required: false
+    default: preview
+  env-overrides:
+    description: |
+      Newline-separated KEY=VALUE pairs merged into env.clear. Example:
+        ROLLBAR_ENV=preview
+        ANALYTICS_DISABLED=true
+    required: false
+    default: ""
+  env-secret-overrides:
+    description: Newline-separated extra entries appended to env.secret.
+    required: false
+    default: ""
+  deploy-timeout:
+    description: Override Kamal's `deploy_timeout` (seconds).
+    required: false
+    default: ""
+  builder-context:
+    description: Override `builder.context` (e.g. `.` to allow uncommitted code).
+    required: false
+    default: ""
+  prefix-strip:
+    description: Comma-separated branch prefixes to strip before slug generation.
+    required: false
+    default: "feature/,feat/,fix/,bug/,bugfix/,chore/,hotfix/,release/"
+
+outputs:
+  branch:
+    description: Original (untrimmed) branch name.
+    value: ${{ steps.run.outputs.branch }}
+  slug:
+    description: DNS-safe slug.
+    value: ${{ steps.run.outputs.slug }}
+  db_slug:
+    description: SQL-identifier-safe slug.
+    value: ${{ steps.run.outputs.db_slug }}
+  destination:
+    description: Kamal destination identifier (suffix used by `kamal -d <destination>`).
+    value: ${{ steps.run.outputs.destination }}
+  deploy_file:
+    description: Path to generated `config/deploy.<destination>.yml`.
+    value: ${{ steps.run.outputs.deploy_file }}
+  secrets_file:
+    description: Path to copied `.kamal/secrets.<destination>` (or empty when no base secrets file was provided).
+    value: ${{ steps.run.outputs.secrets_file }}
+  proxy_host:
+    description: Final hostname assigned to the preview app.
+    value: ${{ steps.run.outputs.proxy_host }}
+  service_name:
+    description: Kamal `service:` value used for the per-PR app.
+    value: ${{ steps.run.outputs.service_name }}
+  database_name:
+    description: Resolved DATABASE_NAME (empty if no `database-name-pattern` was given).
+    value: ${{ steps.run.outputs.database_name }}
+  env_label:
+    description: Echoes the env-label input.
+    value: ${{ steps.run.outputs.env_label }}
+  url:
+    description: Convenience: full https:// URL of the preview app.
+    value: https://${{ steps.run.outputs.proxy_host }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Ruby (no Bundler needed; stdlib only)
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: "3.3"
+        bundler-cache: false
+
+    - id: run
+      shell: bash
+      env:
+        GH_BRANCH: ${{ inputs.branch-name }}
+        GH_BASE_DEPLOY_FILE: ${{ inputs.base-deploy-file }}
+        GH_BASE_SECRETS_FILE: ${{ inputs.base-secrets-file }}
+        GH_DOMAIN_SUFFIX: ${{ inputs.domain-suffix }}
+        GH_DOMAIN_LABEL_PATTERN: ${{ inputs.domain-label-pattern }}
+        GH_SERVICE_PATTERN: ${{ inputs.service-pattern }}
+        GH_DESTINATION_PATTERN: ${{ inputs.destination-pattern }}
+        GH_DATABASE_NAME_PATTERN: ${{ inputs.database-name-pattern }}
+        GH_BASE_DATABASE: ${{ inputs.base-database }}
+        GH_IMAGE_TAG: ${{ inputs.image-tag }}
+        GH_ENV_LABEL: ${{ inputs.env-label }}
+        GH_ENV_OVERRIDES: ${{ inputs.env-overrides }}
+        GH_ENV_SECRET_OVERRIDES: ${{ inputs.env-secret-overrides }}
+        GH_DEPLOY_TIMEOUT: ${{ inputs.deploy-timeout }}
+        GH_BUILDER_CONTEXT: ${{ inputs.builder-context }}
+        GH_PREFIX_STRIP: ${{ inputs.prefix-strip }}
+      run: |
+        set -euo pipefail
+
+        cmd=(${{ github.action_path }}/../../../bin/feature-deploys generate
+          --branch "$GH_BRANCH"
+          --base-deploy-file "$GH_BASE_DEPLOY_FILE"
+          --domain-suffix "$GH_DOMAIN_SUFFIX"
+          --domain-label-pattern "$GH_DOMAIN_LABEL_PATTERN"
+          --service-pattern "$GH_SERVICE_PATTERN"
+          --destination-pattern "$GH_DESTINATION_PATTERN"
+          --env-label "$GH_ENV_LABEL"
+          --prefix-strip "$GH_PREFIX_STRIP")
+
+        if [ -n "$GH_BASE_SECRETS_FILE" ]; then
+          cmd+=(--base-secrets-file "$GH_BASE_SECRETS_FILE")
+        fi
+        if [ -n "$GH_DATABASE_NAME_PATTERN" ]; then
+          cmd+=(--database-name-pattern "$GH_DATABASE_NAME_PATTERN")
+        fi
+        if [ -n "$GH_BASE_DATABASE" ]; then
+          cmd+=(--base-database "$GH_BASE_DATABASE")
+        fi
+        if [ -n "$GH_IMAGE_TAG" ]; then
+          cmd+=(--image-tag "$GH_IMAGE_TAG")
+        fi
+        if [ -n "$GH_DEPLOY_TIMEOUT" ]; then
+          cmd+=(--deploy-timeout "$GH_DEPLOY_TIMEOUT")
+        fi
+        if [ -n "$GH_BUILDER_CONTEXT" ]; then
+          cmd+=(--builder-context "$GH_BUILDER_CONTEXT")
+        fi
+
+        # Multiple --env-override flags
+        if [ -n "$GH_ENV_OVERRIDES" ]; then
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            cmd+=(--env-override "$line")
+          done <<< "$GH_ENV_OVERRIDES"
+        fi
+        if [ -n "$GH_ENV_SECRET_OVERRIDES" ]; then
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            cmd+=(--env-secret "$line")
+          done <<< "$GH_ENV_SECRET_OVERRIDES"
+        fi
+
+        "${cmd[@]}"

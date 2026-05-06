@@ -1,0 +1,56 @@
+# Drop this file into your Rails app at .github/workflows/preview.yml
+#
+# Adjust the `with:` block to match your app and infrastructure. The
+# repo-level secrets that need to be set are listed in `secrets:` below —
+# `secrets: inherit` passes them through automatically.
+
+name: Preview environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  delete:
+
+permissions:
+  contents: read
+  packages: write          # GHCR push during `kamal deploy`
+  pull-requests: write     # rolling status comment
+  deployments: write       # GitHub Deployments API
+  id-token: write          # OIDC, optional
+
+jobs:
+  preview:
+    uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1
+    with:
+      base-deploy-file:        config/deploy.staging.yml
+      base-secrets-file:       .kamal/secrets.staging
+      domain-suffix:           preview.example.com
+      deploy-host:             staging.example.com
+      database-engine:         postgres
+      database-template:       myapp_staging
+      database-name-pattern:   "myapp_{db_slug}"
+
+      # Optional: pin the per-PR image tag to the head commit SHA so two
+      # deploys of the same branch don't accidentally cache the same image.
+      image-tag: ${{ github.event.pull_request.head.sha }}
+
+      # Optional: per-PR env overrides written to env.clear of the generated
+      # deploy file. Multi-line values are split on newlines.
+      env-overrides: |
+        ROLLBAR_ENV=preview
+        ANALYTICS_DISABLED=true
+
+    secrets:
+      # Required: SSH key for the deploy host (must be the same key Kamal
+      # uses, so add it as a single repo-level secret).
+      SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      # Required for Postgres: database admin credentials. Must be able to
+      # CREATEDB and connect to the maintenance database.
+      PG_HOST:     ${{ secrets.PG_HOST }}
+      PG_USER:     ${{ secrets.PG_USER }}
+      PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+
+      # Optional Postgres knobs.
+      PG_PORT:     ${{ secrets.PG_PORT }}
+      PG_SSLMODE:  ${{ secrets.PG_SSLMODE }}

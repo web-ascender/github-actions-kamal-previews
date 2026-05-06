@@ -1,0 +1,99 @@
+name: feature-deploys / pr-comment
+description: |
+  Posts (or updates in place) a single rolling comment on the PR with the
+  current preview-environment status. Identifies its own previous comment
+  via a hidden HTML marker so we never spam the PR with multiple comments.
+
+inputs:
+  state:
+    description: One of `building`, `ready`, `failed`, `removed`.
+    required: true
+  url:
+    description: Public URL of the preview app.
+    required: false
+    default: ""
+  destination:
+    description: Kamal destination (used in the comment body for context).
+    required: false
+    default: ""
+  database-name:
+    description: Resolved database name (used in the comment body).
+    required: false
+    default: ""
+  pr-number:
+    description: PR number to comment on. Default = current PR if available.
+    required: false
+    default: ""
+  github-token:
+    description: GitHub token with `pull-requests: write`.
+    required: false
+    default: ${{ github.token }}
+  marker:
+    description: Hidden HTML marker used to identify our previous comment.
+    required: false
+    default: <!-- feature-deploys:status -->
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        STATE: ${{ inputs.state }}
+        URL: ${{ inputs.url }}
+        DEST: ${{ inputs.destination }}
+        DB_NAME: ${{ inputs.database-name }}
+        PR_NUMBER_INPUT: ${{ inputs.pr-number }}
+        MARKER: ${{ inputs.marker }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        EVENT_PR: ${{ github.event.pull_request.number }}
+        RUN_ID: ${{ github.run_id }}
+        SERVER_URL: ${{ github.server_url }}
+      run: |
+        set -euo pipefail
+
+        pr_number="${PR_NUMBER_INPUT:-$EVENT_PR}"
+        if [ -z "$pr_number" ]; then
+          echo "::warning::No PR number available — skipping PR comment."
+          exit 0
+        fi
+
+        # Compose body
+        case "$STATE" in
+          building) emoji=":hourglass_flowing_sand:" ; status="Building preview environment…" ;;
+          ready)    emoji=":white_check_mark:"      ; status="Preview environment is **ready**." ;;
+          failed)   emoji=":x:"                     ; status="Preview environment **failed to deploy**." ;;
+          removed)  emoji=":wastebasket:"           ; status="Preview environment **removed**." ;;
+          *)        emoji=":information_source:"    ; status="Status: \`$STATE\`" ;;
+        esac
+
+        body="$MARKER
+$emoji $status
+
+| | |
+| --- | --- |
+"
+        [ -n "$URL" ]      && body+="| URL | <$URL> |
+"
+        [ -n "$DEST" ]     && body+="| Kamal destination | \`$DEST\` |
+"
+        [ -n "$DB_NAME" ]  && body+="| Database | \`$DB_NAME\` |
+"
+        body+="| Workflow run | [$RUN_ID]($SERVER_URL/$GH_REPO/actions/runs/$RUN_ID) |
+
+<sub>Posted by [feature-deploys](https://github.com/web-ascender/github-actions-kamal-previews).</sub>"
+
+        # Find existing comment by marker
+        existing_id="$(gh api -H 'Accept: application/vnd.github+json' \
+          "/repos/$GH_REPO/issues/$pr_number/comments" --paginate \
+          --jq "[.[] | select(.body | startswith(\"$MARKER\"))][0].id")"
+
+        if [ -n "$existing_id" ] && [ "$existing_id" != "null" ]; then
+          gh api --method PATCH "/repos/$GH_REPO/issues/comments/$existing_id" \
+            -f body="$body" >/dev/null
+          echo "Updated comment $existing_id."
+        else
+          gh api --method POST "/repos/$GH_REPO/issues/$pr_number/comments" \
+            -f body="$body" >/dev/null
+          echo "Created new PR comment on PR #$pr_number."
+        fi

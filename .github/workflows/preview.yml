@@ -1,0 +1,357 @@
+# feature-deploys / preview environment lifecycle.
+#
+# A reusable workflow that consumers call from their own repo with `uses:`.
+# Triggers on the same events the consumer's workflow does — typically
+# `pull_request` (open/sync/reopen/close) plus `delete` (branch).
+#
+# Internally it:
+#   1. Checks out this repo at the same ref the consumer pinned, so the
+#      sub-actions (.github/actions/*) and helper scripts (scripts/*) are
+#      available locally.
+#   2. Decides whether to deploy or tear down based on the triggering event.
+#   3. Calls the matching sub-actions in sequence.
+#
+# Example consumer-side workflow:
+#
+#   name: Preview environment
+#   on:
+#     pull_request: { types: [opened, synchronize, reopened, closed] }
+#     delete:
+#   permissions:
+#     contents: read
+#     packages: write
+#     pull-requests: write
+#     deployments: write
+#   jobs:
+#     preview:
+#       uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1
+#       with:
+#         base-deploy-file: config/deploy.staging.yml
+#         domain-suffix: preview.example.com
+#         deploy-host: deploy.example.com
+#         database-engine: postgres
+#         database-template: myapp_staging
+#         database-name-pattern: "myapp_{db_slug}"
+#       secrets: inherit
+
+name: feature-deploys / preview
+
+on:
+  workflow_call:
+    inputs:
+      base-deploy-file:        { type: string, required: true }
+      domain-suffix:           { type: string, required: true }
+      deploy-host:             { type: string, required: true }
+
+      database-engine:         { type: string, default: none }
+      database-template:       { type: string, default: "" }
+      database-name-pattern:   { type: string, default: "" }
+
+      sqlite-source-path:        { type: string, default: "" }
+      sqlite-target-path-pattern:{ type: string, default: "" }
+      sqlite-also-clone:         { type: string, default: "" }
+
+      base-secrets-file:       { type: string, default: "" }
+      domain-label-pattern:    { type: string, default: "{slug}" }
+      service-pattern:         { type: string, default: "{base_service}-{slug}" }
+      destination-pattern:     { type: string, default: "{slug}" }
+      env-label:               { type: string, default: preview }
+      env-overrides:           { type: string, default: "" }
+      env-secret-overrides:    { type: string, default: "" }
+      deploy-timeout:          { type: string, default: "" }
+      builder-context:         { type: string, default: "" }
+      prefix-strip:            { type: string, default: "feature/,feat/,fix/,bug/,bugfix/,chore/,hotfix/,release/" }
+      image-tag:               { type: string, default: "" }
+      ruby-version:            { type: string, default: "3.3" }
+      kamal-version:           { type: string, default: "" }
+      ssh-user:                { type: string, default: deploy }
+      ssh-port:                { type: string, default: "22" }
+
+    secrets:
+      SSH_PRIVATE_KEY:    { required: true }
+      PG_HOST:            { required: false }
+      PG_PORT:            { required: false }
+      PG_USER:            { required: false }
+      PG_PASSWORD:        { required: false }
+      PG_SSLMODE:         { required: false }
+      MYSQL_HOST:         { required: false }
+      MYSQL_PORT:         { required: false }
+      MYSQL_USER:         { required: false }
+      MYSQL_PASSWORD:     { required: false }
+      MYSQL_SSL_MODE:     { required: false }
+      REGISTRY_USERNAME:  { required: false }
+      REGISTRY_PASSWORD:  { required: false }
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+  deployments: write
+  id-token: write
+
+# Concurrency group keyed by branch / PR / deleted ref. Cancel in-flight
+# deploys (latest push wins) but never cancel teardowns.
+concurrency:
+  group: feature-deploys-${{ github.event.pull_request.number || github.event.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+
+jobs:
+  deploy:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out caller's repo
+        uses: actions/checkout@v4
+
+      - name: Resolve feature-deploys ref
+        id: fd_ref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        # Parse `org/repo/.github/workflows/preview.yml@<ref>` — `ref` is the
+        # tag/branch/SHA the consumer pinned to in their `uses:` line. If the
+        # workflow is being run from a fork (rare for reusable workflows),
+        # this still resolves correctly.
+        run: |
+          set -euo pipefail
+          repo="${WORKFLOW_REF%/.github/workflows/*}"
+          ref="${WORKFLOW_REF##*@}"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "feature-deploys: repo=$repo ref=$ref"
+
+      - name: Check out feature-deploys (matching ref)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.fd_ref.outputs.repo }}
+          ref: ${{ steps.fd_ref.outputs.ref }}
+          path: .feature-deploys
+
+      - uses: ./.feature-deploys/.github/actions/setup
+        with:
+          ruby-version: ${{ inputs.ruby-version }}
+          kamal-version: ${{ inputs.kamal-version }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          registry-username: ${{ secrets.REGISTRY_USERNAME }}
+          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - id: config
+        uses: ./.feature-deploys/.github/actions/generate-config
+        with:
+          branch-name: ${{ github.head_ref }}
+          base-deploy-file: ${{ inputs.base-deploy-file }}
+          base-secrets-file: ${{ inputs.base-secrets-file }}
+          domain-suffix: ${{ inputs.domain-suffix }}
+          domain-label-pattern: ${{ inputs.domain-label-pattern }}
+          service-pattern: ${{ inputs.service-pattern }}
+          destination-pattern: ${{ inputs.destination-pattern }}
+          database-name-pattern: ${{ inputs.database-name-pattern }}
+          base-database: ${{ inputs.database-template }}
+          image-tag: ${{ inputs.image-tag }}
+          env-label: ${{ inputs.env-label }}
+          env-overrides: ${{ inputs.env-overrides }}
+          env-secret-overrides: ${{ inputs.env-secret-overrides }}
+          deploy-timeout: ${{ inputs.deploy-timeout }}
+          builder-context: ${{ inputs.builder-context }}
+          prefix-strip: ${{ inputs.prefix-strip }}
+
+      - id: sqlite_path
+        if: inputs.database-engine == 'sqlite'
+        env:
+          PATTERN: ${{ inputs.sqlite-target-path-pattern }}
+          SLUG: ${{ steps.config.outputs.slug }}
+          DB_SLUG: ${{ steps.config.outputs.db_slug }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PATTERN" ]; then
+            echo "::error::sqlite-target-path-pattern is required when database-engine=sqlite"
+            exit 1
+          fi
+          resolved="${PATTERN//\{slug\}/$SLUG}"
+          resolved="${resolved//\{db_slug\}/$DB_SLUG}"
+          echo "path=$resolved" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.feature-deploys/.github/actions/deployment-status
+        with:
+          state: created
+          environment-name: preview-${{ steps.config.outputs.slug }}
+
+      - uses: ./.feature-deploys/.github/actions/pr-comment
+        with:
+          state: building
+          url: ${{ steps.config.outputs.url }}
+          destination: ${{ steps.config.outputs.destination }}
+          database-name: ${{ steps.config.outputs.database_name }}
+
+      - if: inputs.database-engine != 'none'
+        uses: ./.feature-deploys/.github/actions/clone-database
+        with:
+          engine: ${{ inputs.database-engine }}
+          host: ${{ inputs.deploy-host }}
+          ssh-user: ${{ inputs.ssh-user }}
+          ssh-port: ${{ inputs.ssh-port }}
+          pg-host: ${{ secrets.PG_HOST }}
+          pg-port: ${{ secrets.PG_PORT }}
+          pg-user: ${{ secrets.PG_USER }}
+          pg-password: ${{ secrets.PG_PASSWORD }}
+          pg-sslmode: ${{ secrets.PG_SSLMODE }}
+          mysql-host: ${{ secrets.MYSQL_HOST }}
+          mysql-port: ${{ secrets.MYSQL_PORT }}
+          mysql-user: ${{ secrets.MYSQL_USER }}
+          mysql-password: ${{ secrets.MYSQL_PASSWORD }}
+          mysql-ssl-mode: ${{ secrets.MYSQL_SSL_MODE }}
+          source-database: ${{ inputs.database-template }}
+          target-database: ${{ steps.config.outputs.database_name }}
+          sqlite-source-path: ${{ inputs.sqlite-source-path }}
+          sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
+          sqlite-also-clone: ${{ inputs.sqlite-also-clone }}
+
+      - uses: ./.feature-deploys/.github/actions/deploy
+        with:
+          destination: ${{ steps.config.outputs.destination }}
+
+      - if: success()
+        uses: ./.feature-deploys/.github/actions/deployment-status
+        with:
+          state: success
+          environment-name: preview-${{ steps.config.outputs.slug }}
+          url: ${{ steps.config.outputs.url }}
+
+      - if: success()
+        uses: ./.feature-deploys/.github/actions/pr-comment
+        with:
+          state: ready
+          url: ${{ steps.config.outputs.url }}
+          destination: ${{ steps.config.outputs.destination }}
+          database-name: ${{ steps.config.outputs.database_name }}
+
+      - if: failure()
+        uses: ./.feature-deploys/.github/actions/deployment-status
+        with:
+          state: failure
+          environment-name: preview-${{ steps.config.outputs.slug }}
+
+      - if: failure()
+        uses: ./.feature-deploys/.github/actions/pr-comment
+        with:
+          state: failed
+          destination: ${{ steps.config.outputs.destination }}
+          database-name: ${{ steps.config.outputs.database_name }}
+
+  teardown:
+    if: |
+      (github.event_name == 'pull_request' && github.event.action == 'closed') ||
+      (github.event_name == 'delete' && github.event.ref_type == 'branch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out caller's repo
+        uses: actions/checkout@v4
+
+      - name: Resolve feature-deploys ref
+        id: fd_ref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          repo="${WORKFLOW_REF%/.github/workflows/*}"
+          ref="${WORKFLOW_REF##*@}"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.fd_ref.outputs.repo }}
+          ref: ${{ steps.fd_ref.outputs.ref }}
+          path: .feature-deploys
+
+      - uses: ./.feature-deploys/.github/actions/setup
+        with:
+          ruby-version: ${{ inputs.ruby-version }}
+          kamal-version: ${{ inputs.kamal-version }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          setup-buildx: "false"
+          setup-gha-cache: "false"
+
+      - id: branch
+        env:
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          DELETED_REF: ${{ github.event.ref }}
+        run: |
+          set -euo pipefail
+          name="${PR_BRANCH:-$DELETED_REF}"
+          if [ -z "$name" ]; then
+            echo "::error::Could not determine branch name from event payload."
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - id: config
+        uses: ./.feature-deploys/.github/actions/generate-config
+        with:
+          branch-name: ${{ steps.branch.outputs.name }}
+          base-deploy-file: ${{ inputs.base-deploy-file }}
+          base-secrets-file: ${{ inputs.base-secrets-file }}
+          domain-suffix: ${{ inputs.domain-suffix }}
+          domain-label-pattern: ${{ inputs.domain-label-pattern }}
+          service-pattern: ${{ inputs.service-pattern }}
+          destination-pattern: ${{ inputs.destination-pattern }}
+          database-name-pattern: ${{ inputs.database-name-pattern }}
+          base-database: ${{ inputs.database-template }}
+          env-label: ${{ inputs.env-label }}
+          prefix-strip: ${{ inputs.prefix-strip }}
+
+      - id: sqlite_path
+        if: inputs.database-engine == 'sqlite'
+        env:
+          PATTERN: ${{ inputs.sqlite-target-path-pattern }}
+          SLUG: ${{ steps.config.outputs.slug }}
+          DB_SLUG: ${{ steps.config.outputs.db_slug }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PATTERN" ]; then
+            echo "path=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          resolved="${PATTERN//\{slug\}/$SLUG}"
+          resolved="${resolved//\{db_slug\}/$DB_SLUG}"
+          echo "path=$resolved" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.feature-deploys/.github/actions/teardown
+        with:
+          destination: ${{ steps.config.outputs.destination }}
+
+      - if: inputs.database-engine != 'none'
+        uses: ./.feature-deploys/.github/actions/drop-database
+        with:
+          engine: ${{ inputs.database-engine }}
+          host: ${{ inputs.deploy-host }}
+          ssh-user: ${{ inputs.ssh-user }}
+          ssh-port: ${{ inputs.ssh-port }}
+          pg-host: ${{ secrets.PG_HOST }}
+          pg-port: ${{ secrets.PG_PORT }}
+          pg-user: ${{ secrets.PG_USER }}
+          pg-password: ${{ secrets.PG_PASSWORD }}
+          pg-sslmode: ${{ secrets.PG_SSLMODE }}
+          mysql-host: ${{ secrets.MYSQL_HOST }}
+          mysql-port: ${{ secrets.MYSQL_PORT }}
+          mysql-user: ${{ secrets.MYSQL_USER }}
+          mysql-password: ${{ secrets.MYSQL_PASSWORD }}
+          mysql-ssl-mode: ${{ secrets.MYSQL_SSL_MODE }}
+          target-database: ${{ steps.config.outputs.database_name }}
+          sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
+          sqlite-also-drop: ${{ inputs.sqlite-also-clone }}
+
+      - if: always()
+        uses: ./.feature-deploys/.github/actions/deployment-status
+        with:
+          state: removed
+          environment-name: preview-${{ steps.config.outputs.slug }}
+
+      - if: always() && github.event_name == 'pull_request'
+        uses: ./.feature-deploys/.github/actions/pr-comment
+        with:
+          state: removed
+          destination: ${{ steps.config.outputs.destination }}
+          database-name: ${{ steps.config.outputs.database_name }}
+          pr-number: ${{ github.event.pull_request.number }}

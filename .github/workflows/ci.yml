@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Test the Ruby library
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ruby: ["3.2", "3.3", "3.4"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+      - run: ruby -Ilib -Itest test/namer_test.rb
+      - run: ruby -Ilib -Itest test/config_generator_test.rb
+      - run: ruby -Ilib -Itest test/cli_test.rb
+
+  shellcheck:
+    name: Lint shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: scripts
+          severity: warning
+
+  actionlint:
+    name: Lint workflow / action YAML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color
+
+  postgres-integration:
+    name: Postgres clone/drop smoke test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seed source DB
+        env:
+          PGHOST: localhost
+          PGPORT: "55432"
+          PGUSER: postgres
+          PGPASSWORD: test
+        run: |
+          docker run --rm --network host -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD postgres:16-alpine \
+            psql -c "CREATE DATABASE myapp_staging;"
+          docker run --rm --network host -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD postgres:16-alpine \
+            psql -d myapp_staging -c "CREATE TABLE users(id serial primary key, name text); INSERT INTO users(name) VALUES ('alice'),('bob');"
+      - name: Clone
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/scripts:/work/scripts:ro" \
+            -e PGHOST=localhost -e PGPORT=55432 -e PGUSER=postgres -e PGPASSWORD=test \
+            -e SOURCE_DATABASE=myapp_staging -e TARGET_DATABASE=myapp_pr_42 \
+            postgres:16-alpine bash /work/scripts/postgres/clone.sh
+      - name: Verify clone
+        run: |
+          count=$(docker run --rm --network host \
+            -e PGHOST=localhost -e PGPORT=55432 -e PGUSER=postgres -e PGPASSWORD=test \
+            postgres:16-alpine \
+            psql -tAc "SELECT count(*) FROM users;" myapp_pr_42)
+          test "$count" = "2" || { echo "expected 2 rows, got $count"; exit 1; }
+      - name: Idempotency
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/scripts:/work/scripts:ro" \
+            -e PGHOST=localhost -e PGPORT=55432 -e PGUSER=postgres -e PGPASSWORD=test \
+            -e SOURCE_DATABASE=myapp_staging -e TARGET_DATABASE=myapp_pr_42 \
+            postgres:16-alpine bash /work/scripts/postgres/clone.sh
+      - name: Drop
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/scripts:/work/scripts:ro" \
+            -e PGHOST=localhost -e PGPORT=55432 -e PGUSER=postgres -e PGPASSWORD=test \
+            -e TARGET_DATABASE=myapp_pr_42 \
+            postgres:16-alpine bash /work/scripts/postgres/drop.sh
+      - name: Verify drop is idempotent
+        run: |
+          docker run --rm --network host \
+            -v "$PWD/scripts:/work/scripts:ro" \
+            -e PGHOST=localhost -e PGPORT=55432 -e PGUSER=postgres -e PGPASSWORD=test \
+            -e TARGET_DATABASE=myapp_pr_42 \
+            postgres:16-alpine bash /work/scripts/postgres/drop.sh
+      - name: Identifier injection rejected
+        run: |
+          if docker run --rm --network host \
+            -v "$PWD/scripts:/work/scripts:ro" \
+            -e PGHOST=localhost -e PGPORT=55432 -e PGUSER=postgres -e PGPASSWORD=test \
+            -e SOURCE_DATABASE='myapp_staging" --' -e TARGET_DATABASE=evil \
+            postgres:16-alpine bash /work/scripts/postgres/clone.sh; then
+            echo "should have rejected malicious input"; exit 1
+          fi

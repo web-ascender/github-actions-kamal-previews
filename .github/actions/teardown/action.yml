@@ -1,0 +1,62 @@
+name: feature-deploys / teardown
+description: |
+  Runs `kamal app remove -d <destination>` to stop and uninstall the per-PR
+  app. Optionally removes the generated `config/deploy.<destination>.yml`
+  and `.kamal/secrets.<destination>` files locally so the runner's working
+  copy is clean (useful when this action is part of a chain that posts a
+  summary or commits anything).
+
+  Note: this action does NOT drop the database — pair it with the
+  `drop-database` action when you want a full teardown.
+
+inputs:
+  destination:
+    description: Kamal destination identifier.
+    required: true
+  release-stale-lock:
+    description: Whether to run `kamal lock release -d <destination>` before remove.
+    required: false
+    default: "true"
+  remove-generated-files:
+    description: Whether to delete config/deploy.<destination>.yml and .kamal/secrets.<destination> after the app is removed.
+    required: false
+    default: "true"
+  ignore-missing-app:
+    description: |
+      If `true`, suppress errors from `kamal app remove` when the app doesn't exist
+      on the host (idempotent teardown). Default true.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.release-stale-lock == 'true'
+      shell: bash
+      env:
+        DEST: ${{ inputs.destination }}
+      run: kamal lock release -d "$DEST" || true
+
+    - shell: bash
+      env:
+        DEST: ${{ inputs.destination }}
+        IGNORE_MISSING: ${{ inputs.ignore-missing-app }}
+      run: |
+        set -euo pipefail
+        if kamal app remove -d "$DEST" -y; then
+          echo "App '$DEST' removed."
+        else
+          rc=$?
+          if [ "$IGNORE_MISSING" = "true" ]; then
+            echo "::warning::kamal app remove exited $rc — assuming the app was already gone."
+          else
+            exit $rc
+          fi
+        fi
+
+    - if: inputs.remove-generated-files == 'true'
+      shell: bash
+      env:
+        DEST: ${{ inputs.destination }}
+      run: |
+        rm -f "config/deploy.${DEST}.yml" ".kamal/secrets.${DEST}"

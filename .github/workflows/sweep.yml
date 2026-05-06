@@ -1,0 +1,253 @@
+# feature-deploys / orphan sweep
+#
+# Reconciles the set of registered "preview" GitHub Deployments against the
+# set of currently-open pull requests, and tears down anything that's been
+# orphaned. This catches the rare but real case where a `pull_request: closed`
+# or `delete` event was missed (GitHub Actions outage, branch deleted while
+# Actions was disabled, etc.).
+#
+# Consumers schedule this from their own repo:
+#
+#   name: Preview sweep
+#   on:
+#     schedule:
+#       - cron: '0 6 * * *'   # daily at 06:00 UTC
+#     workflow_dispatch:
+#   permissions:
+#     contents: read
+#     pull-requests: read
+#     deployments: write
+#   jobs:
+#     sweep:
+#       uses: web-ascender/github-actions-kamal-previews/.github/workflows/sweep.yml@v1
+#       with:
+#         base-deploy-file: config/deploy.staging.yml
+#         domain-suffix: preview.example.com
+#         deploy-host: deploy.example.com
+#         database-engine: postgres
+#         database-template: myapp_staging
+#         database-name-pattern: "myapp_{db_slug}"
+#         environment-prefix: preview-
+#       secrets: inherit
+
+name: feature-deploys / sweep
+
+on:
+  workflow_call:
+    inputs:
+      base-deploy-file:        { type: string, required: true }
+      domain-suffix:           { type: string, required: true }
+      deploy-host:             { type: string, required: true }
+      database-engine:         { type: string, default: none }
+      database-template:      { type: string, default: "" }
+      database-name-pattern:   { type: string, default: "" }
+      sqlite-target-path-pattern: { type: string, default: "" }
+      sqlite-also-clone:       { type: string, default: "" }
+      base-secrets-file:       { type: string, default: "" }
+      domain-label-pattern:    { type: string, default: "{slug}" }
+      service-pattern:         { type: string, default: "{base_service}-{slug}" }
+      destination-pattern:     { type: string, default: "{slug}" }
+      env-label:               { type: string, default: preview }
+      prefix-strip:            { type: string, default: "feature/,feat/,fix/,bug/,bugfix/,chore/,hotfix/,release/" }
+      ruby-version:            { type: string, default: "3.3" }
+      kamal-version:           { type: string, default: "" }
+      ssh-user:                { type: string, default: deploy }
+      ssh-port:                { type: string, default: "22" }
+      environment-prefix:
+        description: |
+          Only environments whose name starts with this string are considered.
+          Defaults to `preview-` (matches the convention used by this repo's
+          deployment-status action).
+        type: string
+        default: "preview-"
+      dry-run:
+        description: When `true`, log what would be torn down but don't actually do it.
+        type: string
+        default: "false"
+
+    secrets:
+      SSH_PRIVATE_KEY:    { required: true }
+      PG_HOST:            { required: false }
+      PG_PORT:            { required: false }
+      PG_USER:            { required: false }
+      PG_PASSWORD:        { required: false }
+      PG_SSLMODE:         { required: false }
+      MYSQL_HOST:         { required: false }
+      MYSQL_PORT:         { required: false }
+      MYSQL_USER:         { required: false }
+      MYSQL_PASSWORD:     { required: false }
+      MYSQL_SSL_MODE:     { required: false }
+
+permissions:
+  contents: read
+  pull-requests: read
+  deployments: write
+
+jobs:
+  identify-orphans:
+    runs-on: ubuntu-latest
+    outputs:
+      orphan-branches: ${{ steps.find.outputs.orphan_branches }}
+    steps:
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ENV_PREFIX: ${{ inputs.environment-prefix }}
+        run: |
+          set -euo pipefail
+
+          # Open PR head refs (branch names) → these are the deploys that should stay.
+          mapfile -t open_branches < <(gh pr list --repo "$GH_REPO" --state open --json headRefName --jq '.[].headRefName')
+
+          # All transient environments matching the configured prefix.
+          mapfile -t envs < <(gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GH_REPO/environments" --paginate \
+            --jq '.environments // .[] | .name' \
+            | grep -E "^${ENV_PREFIX}" || true)
+
+          orphans=()
+          for env in "${envs[@]}"; do
+            # Get the most recent deployment for this environment.
+            deployment_state="$(gh api -H 'Accept: application/vnd.github+json' \
+              "/repos/$GH_REPO/deployments?environment=${env}&per_page=1" \
+              --jq '.[0].id // empty' || true)"
+            if [ -z "$deployment_state" ]; then continue; fi
+            latest_status="$(gh api -H 'Accept: application/vnd.github+json' \
+              "/repos/$GH_REPO/deployments/${deployment_state}/statuses?per_page=1" \
+              --jq '.[0].state // empty' || true)"
+            if [ "$latest_status" = "inactive" ] || [ "$latest_status" = "removed" ]; then
+              continue
+            fi
+
+            slug="${env#${ENV_PREFIX}}"
+            # Try to match the slug against any open PR's head ref via the
+            # same slug rule. We re-derive each open branch's slug locally.
+            matched=0
+            for branch in "${open_branches[@]}"; do
+              # Quick approximation of feature-deploys' slug rule: lowercase,
+              # non-alnum → '-', collapse '-', strip leading prefix segments.
+              candidate="$(echo "$branch" | tr '[:upper:]' '[:lower:]' | sed -E 's|^(feature|feat|fix|bug|bugfix|chore|hotfix|release)/||' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+              if [ "$candidate" = "$slug" ]; then matched=1; break; fi
+            done
+
+            if [ "$matched" = "0" ]; then
+              echo "::notice::Orphan detected: environment=$env (no open PR matches slug '$slug')"
+              orphans+=("$slug")
+            fi
+          done
+
+          if [ ${#orphans[@]} -eq 0 ]; then
+            echo "No orphans found."
+            echo "orphan_branches=[]" >> "$GITHUB_OUTPUT"
+          else
+            json="$(printf '%s\n' "${orphans[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+            echo "orphan_branches=$json" >> "$GITHUB_OUTPUT"
+          fi
+
+  teardown-orphans:
+    needs: identify-orphans
+    if: |
+      needs.identify-orphans.outputs.orphan-branches != '[]' &&
+      needs.identify-orphans.outputs.orphan-branches != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        slug: ${{ fromJSON(needs.identify-orphans.outputs.orphan-branches) }}
+    steps:
+      - if: inputs.dry-run == 'true'
+        run: |
+          echo "::notice::DRY RUN — would tear down orphan with slug=${{ matrix.slug }}"
+          exit 0
+
+      - uses: actions/checkout@v4
+
+      - id: fd_ref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          repo="${WORKFLOW_REF%/.github/workflows/*}"
+          ref="${WORKFLOW_REF##*@}"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.fd_ref.outputs.repo }}
+          ref: ${{ steps.fd_ref.outputs.ref }}
+          path: .feature-deploys
+
+      - uses: ./.feature-deploys/.github/actions/setup
+        with:
+          ruby-version: ${{ inputs.ruby-version }}
+          kamal-version: ${{ inputs.kamal-version }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          setup-buildx: "false"
+          setup-gha-cache: "false"
+
+      # The slug from the matrix is itself the destination identifier under
+      # the default destination-pattern. We use it directly to look up the
+      # database name (we still need to derive db_slug etc.) by passing the
+      # slug as the branch name to generate-config — yes, that's a tiny abuse
+      # but it produces the right artifacts.
+      - id: config
+        uses: ./.feature-deploys/.github/actions/generate-config
+        with:
+          branch-name: ${{ matrix.slug }}
+          base-deploy-file: ${{ inputs.base-deploy-file }}
+          base-secrets-file: ${{ inputs.base-secrets-file }}
+          domain-suffix: ${{ inputs.domain-suffix }}
+          domain-label-pattern: ${{ inputs.domain-label-pattern }}
+          service-pattern: ${{ inputs.service-pattern }}
+          destination-pattern: ${{ inputs.destination-pattern }}
+          database-name-pattern: ${{ inputs.database-name-pattern }}
+          base-database: ${{ inputs.database-template }}
+          env-label: ${{ inputs.env-label }}
+          prefix-strip: ${{ inputs.prefix-strip }}
+
+      - id: sqlite_path
+        if: inputs.database-engine == 'sqlite'
+        env:
+          PATTERN: ${{ inputs.sqlite-target-path-pattern }}
+          SLUG: ${{ steps.config.outputs.slug }}
+          DB_SLUG: ${{ steps.config.outputs.db_slug }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PATTERN" ]; then echo "path=" >> "$GITHUB_OUTPUT"; exit 0; fi
+          resolved="${PATTERN//\{slug\}/$SLUG}"
+          resolved="${resolved//\{db_slug\}/$DB_SLUG}"
+          echo "path=$resolved" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.feature-deploys/.github/actions/teardown
+        with:
+          destination: ${{ steps.config.outputs.destination }}
+
+      - if: inputs.database-engine != 'none'
+        uses: ./.feature-deploys/.github/actions/drop-database
+        with:
+          engine: ${{ inputs.database-engine }}
+          host: ${{ inputs.deploy-host }}
+          ssh-user: ${{ inputs.ssh-user }}
+          ssh-port: ${{ inputs.ssh-port }}
+          pg-host: ${{ secrets.PG_HOST }}
+          pg-port: ${{ secrets.PG_PORT }}
+          pg-user: ${{ secrets.PG_USER }}
+          pg-password: ${{ secrets.PG_PASSWORD }}
+          pg-sslmode: ${{ secrets.PG_SSLMODE }}
+          mysql-host: ${{ secrets.MYSQL_HOST }}
+          mysql-port: ${{ secrets.MYSQL_PORT }}
+          mysql-user: ${{ secrets.MYSQL_USER }}
+          mysql-password: ${{ secrets.MYSQL_PASSWORD }}
+          mysql-ssl-mode: ${{ secrets.MYSQL_SSL_MODE }}
+          target-database: ${{ steps.config.outputs.database_name }}
+          sqlite-target-path: ${{ steps.sqlite_path.outputs.path }}
+          sqlite-also-drop: ${{ inputs.sqlite-also-clone }}
+
+      - if: always()
+        uses: ./.feature-deploys/.github/actions/deployment-status
+        with:
+          state: removed
+          environment-name: preview-${{ steps.config.outputs.slug }}

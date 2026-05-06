@@ -1,0 +1,78 @@
+name: feature-deploys / setup
+description: |
+  Installs Ruby, the Kamal CLI, the SSH agent (with the deploy key loaded),
+  and Docker Buildx. The composite action picked up by feature-deploys'
+  reusable workflow before any deploy or teardown step.
+
+inputs:
+  ruby-version:
+    description: Ruby version installed by ruby/setup-ruby. Used both to run feature-deploys' own scripts and to invoke `kamal`.
+    required: false
+    default: "3.3"
+  kamal-version:
+    description: Specific Kamal gem version. Empty = latest.
+    required: false
+    default: ""
+  ssh-private-key:
+    description: Private key registered with the deploy host. Loaded into ssh-agent.
+    required: true
+  setup-buildx:
+    description: Whether to install Docker Buildx (needed for `kamal build`).
+    required: false
+    default: "true"
+  setup-gha-cache:
+    description: Whether to expose the GitHub Actions cache to BuildKit (used by Kamal's `cache: type: gha` builder option).
+    required: false
+    default: "true"
+  registry-username:
+    description: Optional pre-login username for a container registry. Skipped if blank. Most setups should rely on Kamal's own registry block instead.
+    required: false
+    default: ""
+  registry-password:
+    description: Password matching `registry-username`.
+    required: false
+    default: ""
+  registry-server:
+    description: Registry host (e.g. ghcr.io). Required when `registry-username` is set.
+    required: false
+    default: ghcr.io
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ inputs.ruby-version }}
+        bundler-cache: false
+
+    - name: Install Kamal
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.kamal-version }}" ]; then
+          gem install kamal --version "${{ inputs.kamal-version }}" --no-document
+        else
+          gem install kamal --no-document
+        fi
+        kamal version
+
+    - name: Configure ssh-agent
+      uses: webfactory/ssh-agent@v0.9.1
+      with:
+        ssh-private-key: ${{ inputs.ssh-private-key }}
+
+    - name: Set up Docker Buildx
+      if: inputs.setup-buildx == 'true'
+      uses: docker/setup-buildx-action@v3
+
+    - name: Expose GitHub Actions runtime to BuildKit
+      if: inputs.setup-gha-cache == 'true'
+      uses: crazy-max/ghaction-github-runtime@v3
+
+    - name: Log in to container registry
+      if: inputs.registry-username != ''
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry-server }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}

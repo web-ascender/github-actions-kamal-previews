@@ -1,0 +1,239 @@
+name: feature-deploys / clone-database
+description: |
+  Clones the configured staging database into a per-PR target. Runs over SSH
+  on the deploy host (so neither the GitHub runner nor any other machine
+  needs network access to the database server).
+
+  For PostgreSQL and MySQL, the action uploads the appropriate script to the
+  deploy host and runs it inside a Docker container with the official client
+  image — the deploy host itself does not need `psql`, `mysqldump`, etc.
+  installed. For SQLite, the action runs the script directly against files on
+  the host (the host needs `sqlite3` installed; on Debian/Ubuntu:
+  `apt install sqlite3`).
+
+inputs:
+  engine:
+    description: One of `postgres`, `mysql`, `sqlite`.
+    required: true
+  host:
+    description: SSH host where the script should run (typically your Kamal deploy host).
+    required: true
+  ssh-user:
+    description: SSH user. Default `deploy`.
+    required: false
+    default: deploy
+  ssh-port:
+    description: SSH port. Default 22.
+    required: false
+    default: "22"
+  docker-image:
+    description: Docker image used to run the postgres/mysql client tools on the host. Defaults to `postgres:16-alpine` for engine=postgres and `mysql:8.4` for engine=mysql. Ignored for sqlite.
+    required: false
+    default: ""
+
+  # Postgres
+  pg-host:
+    description: PG host (database server). Required when engine=postgres.
+    required: false
+    default: ""
+  pg-port:
+    description: PG port. Default 5432.
+    required: false
+    default: "5432"
+  pg-user:
+    description: PG user (must have CREATEDB).
+    required: false
+    default: ""
+  pg-password:
+    description: PG password.
+    required: false
+    default: ""
+  pg-sslmode:
+    description: PG sslmode (e.g. require, prefer, disable).
+    required: false
+    default: ""
+
+  # MySQL
+  mysql-host:
+    description: MySQL host. Required when engine=mysql.
+    required: false
+    default: ""
+  mysql-port:
+    description: MySQL port. Default 3306.
+    required: false
+    default: "3306"
+  mysql-user:
+    description: MySQL user.
+    required: false
+    default: ""
+  mysql-password:
+    description: MySQL password.
+    required: false
+    default: ""
+  mysql-ssl-mode:
+    description: Forwarded to mysql --ssl-mode (e.g. REQUIRED).
+    required: false
+    default: ""
+
+  # SQLite
+  sqlite-source-path:
+    description: Absolute path on the deploy host to the source SQLite file. Required when engine=sqlite.
+    required: false
+    default: ""
+  sqlite-target-path:
+    description: Absolute path on the deploy host where the cloned SQLite file should land. Required when engine=sqlite.
+    required: false
+    default: ""
+  sqlite-also-clone:
+    description: Space-separated suffixes for companion DB files (e.g. "_queue _cache _cable").
+    required: false
+    default: ""
+
+  # Common (postgres/mysql)
+  source-database:
+    description: Existing database name to clone from. Required for postgres/mysql.
+    required: false
+    default: ""
+  target-database:
+    description: New database name to create. Required for postgres/mysql.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - id: validate
+      shell: bash
+      env:
+        INPUT_ENGINE: ${{ inputs.engine }}
+        INPUT_HOST: ${{ inputs.host }}
+        INPUT_SOURCE_DATABASE: ${{ inputs.source-database }}
+        INPUT_TARGET_DATABASE: ${{ inputs.target-database }}
+        INPUT_SQLITE_SOURCE_PATH: ${{ inputs.sqlite-source-path }}
+        INPUT_SQLITE_TARGET_PATH: ${{ inputs.sqlite-target-path }}
+      run: |
+        set -euo pipefail
+        case "$INPUT_ENGINE" in
+          postgres|mysql|sqlite) ;;
+          *) echo "engine must be one of postgres, mysql, sqlite (got: $INPUT_ENGINE)"; exit 1 ;;
+        esac
+        if [ -z "$INPUT_HOST" ]; then echo "host is required"; exit 1; fi
+        case "$INPUT_ENGINE" in
+          postgres|mysql)
+            [ -z "$INPUT_SOURCE_DATABASE" ] && { echo "source-database is required for $INPUT_ENGINE"; exit 1; }
+            [ -z "$INPUT_TARGET_DATABASE" ] && { echo "target-database is required for $INPUT_ENGINE"; exit 1; }
+            ;;
+          sqlite)
+            [ -z "$INPUT_SQLITE_SOURCE_PATH" ] && { echo "sqlite-source-path is required for sqlite"; exit 1; }
+            [ -z "$INPUT_SQLITE_TARGET_PATH" ] && { echo "sqlite-target-path is required for sqlite"; exit 1; }
+            ;;
+        esac
+
+    - id: clone
+      shell: bash
+      env:
+        INPUT_ENGINE: ${{ inputs.engine }}
+        INPUT_HOST: ${{ inputs.host }}
+        INPUT_SSH_USER: ${{ inputs.ssh-user }}
+        INPUT_SSH_PORT: ${{ inputs.ssh-port }}
+        INPUT_DOCKER_IMAGE: ${{ inputs.docker-image }}
+        INPUT_PG_HOST: ${{ inputs.pg-host }}
+        INPUT_PG_PORT: ${{ inputs.pg-port }}
+        INPUT_PG_USER: ${{ inputs.pg-user }}
+        INPUT_PG_PASSWORD: ${{ inputs.pg-password }}
+        INPUT_PG_SSLMODE: ${{ inputs.pg-sslmode }}
+        INPUT_MYSQL_HOST: ${{ inputs.mysql-host }}
+        INPUT_MYSQL_PORT: ${{ inputs.mysql-port }}
+        INPUT_MYSQL_USER: ${{ inputs.mysql-user }}
+        INPUT_MYSQL_PASSWORD: ${{ inputs.mysql-password }}
+        INPUT_MYSQL_SSL_MODE: ${{ inputs.mysql-ssl-mode }}
+        INPUT_SOURCE_DATABASE: ${{ inputs.source-database }}
+        INPUT_TARGET_DATABASE: ${{ inputs.target-database }}
+        INPUT_SQLITE_SOURCE_PATH: ${{ inputs.sqlite-source-path }}
+        INPUT_SQLITE_TARGET_PATH: ${{ inputs.sqlite-target-path }}
+        INPUT_SQLITE_ALSO_CLONE: ${{ inputs.sqlite-also-clone }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        # Resolve scripts directory relative to this action.
+        scripts_dir="$(cd "$ACTION_PATH/../../../scripts" && pwd)"
+
+        ssh_target="${INPUT_SSH_USER}@${INPUT_HOST}"
+        ssh_opts=(-o StrictHostKeyChecking=accept-new -p "${INPUT_SSH_PORT}")
+        scp_opts=(-o StrictHostKeyChecking=accept-new -P "${INPUT_SSH_PORT}")
+
+        # Default Docker images
+        docker_image="$INPUT_DOCKER_IMAGE"
+        if [ -z "$docker_image" ]; then
+          case "$INPUT_ENGINE" in
+            postgres) docker_image="postgres:16-alpine" ;;
+            mysql) docker_image="mysql:8.4" ;;
+          esac
+        fi
+
+        # Make a temp directory on the host
+        remote_dir="$(ssh "${ssh_opts[@]}" "$ssh_target" 'mktemp -d')"
+        cleanup() { ssh "${ssh_opts[@]}" "$ssh_target" "rm -rf '$remote_dir'" || true; }
+        trap cleanup EXIT
+
+        # Upload the engine scripts + the shared lib.
+        scp "${scp_opts[@]}" -r "$scripts_dir/lib" "$ssh_target:$remote_dir/"
+        scp "${scp_opts[@]}" -r "$scripts_dir/$INPUT_ENGINE" "$ssh_target:$remote_dir/"
+
+        # Build a temp env file locally and upload it. Using --env-file
+        # avoids quoting issues for passwords containing special characters.
+        local_env="$(mktemp)"
+        case "$INPUT_ENGINE" in
+          postgres)
+            {
+              printf 'PGHOST=%s\n' "$INPUT_PG_HOST"
+              printf 'PGPORT=%s\n' "$INPUT_PG_PORT"
+              printf 'PGUSER=%s\n' "$INPUT_PG_USER"
+              printf 'PGPASSWORD=%s\n' "$INPUT_PG_PASSWORD"
+              [ -n "$INPUT_PG_SSLMODE" ] && printf 'PGSSLMODE=%s\n' "$INPUT_PG_SSLMODE"
+              printf 'SOURCE_DATABASE=%s\n' "$INPUT_SOURCE_DATABASE"
+              printf 'TARGET_DATABASE=%s\n' "$INPUT_TARGET_DATABASE"
+            } > "$local_env"
+            ;;
+          mysql)
+            {
+              printf 'MYSQL_HOST=%s\n' "$INPUT_MYSQL_HOST"
+              printf 'MYSQL_PORT=%s\n' "$INPUT_MYSQL_PORT"
+              printf 'MYSQL_USER=%s\n' "$INPUT_MYSQL_USER"
+              printf 'MYSQL_PASSWORD=%s\n' "$INPUT_MYSQL_PASSWORD"
+              [ -n "$INPUT_MYSQL_SSL_MODE" ] && printf 'MYSQL_SSL_MODE=%s\n' "$INPUT_MYSQL_SSL_MODE"
+              printf 'SOURCE_DATABASE=%s\n' "$INPUT_SOURCE_DATABASE"
+              printf 'TARGET_DATABASE=%s\n' "$INPUT_TARGET_DATABASE"
+            } > "$local_env"
+            ;;
+          sqlite)
+            {
+              printf 'SOURCE_PATH=%s\n' "$INPUT_SQLITE_SOURCE_PATH"
+              printf 'TARGET_PATH=%s\n' "$INPUT_SQLITE_TARGET_PATH"
+              [ -n "$INPUT_SQLITE_ALSO_CLONE" ] && printf 'ALSO_CLONE=%s\n' "$INPUT_SQLITE_ALSO_CLONE"
+            } > "$local_env"
+            ;;
+        esac
+        scp "${scp_opts[@]}" "$local_env" "$ssh_target:$remote_dir/.env"
+        rm -f "$local_env"
+
+        case "$INPUT_ENGINE" in
+          postgres|mysql)
+            # Run the script inside the official client image, with the
+            # host's network so the container can reach the DB server. We
+            # bind-mount the script directory read-only.
+            ssh "${ssh_opts[@]}" "$ssh_target" \
+              "docker run --rm \
+                 --env-file '$remote_dir/.env' \
+                 --network host \
+                 -v '$remote_dir:/work:ro' \
+                 '$docker_image' \
+                 bash /work/$INPUT_ENGINE/clone.sh"
+            ;;
+          sqlite)
+            # Sqlite runs directly on the host. We source the env file and
+            # exec the script.
+            ssh "${ssh_opts[@]}" "$ssh_target" \
+              "set -a && . '$remote_dir/.env' && set +a && bash '$remote_dir/sqlite/clone.sh'"
+            ;;
+        esac
