@@ -192,8 +192,8 @@ runs:
         ssh-private-key: ${{ env.SSH_PRIVATE_KEY }}
         setup-buildx: ${{ steps.dispatch.outputs.mode == 'deploy' && 'true' || 'false' }}
         setup-gha-cache: ${{ steps.dispatch.outputs.mode == 'deploy' && 'true' || 'false' }}
-        registry-username: ${{ env.REGISTRY_USERNAME }}
-        registry-password: ${{ env.REGISTRY_PASSWORD }}
+        registry-username: ${{ env.KAMAL_REGISTRY_USERNAME }}
+        registry-password: ${{ env.KAMAL_REGISTRY_PASSWORD }}
 
     # ── Generate per-PR Kamal config ──────────────────────────────────────
     - id: config

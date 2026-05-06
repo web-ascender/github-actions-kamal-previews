@@ -75,8 +75,8 @@ forwarded automatically.
 | `MYSQL_PASSWORD`      | (mysql) | Password for `MYSQL_USER`. |
 | `MYSQL_PORT`          | No  | Default `3306`. |
 | `MYSQL_SSL_MODE`      | No  | `REQUIRED`, `DISABLED`, etc. |
-| `REGISTRY_USERNAME`   | No  | Pre-login registry username. Most setups don't need this — Kamal handles registry auth itself when configured in `deploy.yml`. |
-| `REGISTRY_PASSWORD`   | No  | Password matching `REGISTRY_USERNAME`. |
+| `KAMAL_REGISTRY_USERNAME` | No  | Pre-login registry username. Same env var Kamal itself reads during `deploy.yml` ERB interpolation, so one secret can serve both. Most setups don't need a pre-login when registry auth is configured in `deploy.yml`. |
+| `KAMAL_REGISTRY_PASSWORD` | No  | Password matching `KAMAL_REGISTRY_USERNAME`. |
 
 `secrets: inherit` from your calling workflow makes all of the above
 auto-pass through.

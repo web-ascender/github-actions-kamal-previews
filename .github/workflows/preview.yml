@@ -96,8 +96,8 @@ on:
       MYSQL_USER:         { required: false }
       MYSQL_PASSWORD:     { required: false }
       MYSQL_SSL_MODE:     { required: false }
-      REGISTRY_USERNAME:  { required: false }
-      REGISTRY_PASSWORD:  { required: false }
+      KAMAL_REGISTRY_USERNAME:  { required: false }
+      KAMAL_REGISTRY_PASSWORD:  { required: false }
 
 permissions:
   contents: read
@@ -182,8 +182,8 @@ jobs:
           ruby-version: ${{ inputs.ruby-version }}
           kamal-version: ${{ inputs.kamal-version }}
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-          registry-username: ${{ secrets.REGISTRY_USERNAME }}
-          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+          registry-username: ${{ secrets.KAMAL_REGISTRY_USERNAME }}
+          registry-password: ${{ secrets.KAMAL_REGISTRY_PASSWORD }}
 
       - id: config
         uses: ./.kamal-previews/.github/actions/generate-config
