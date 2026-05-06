@@ -96,6 +96,10 @@ on:
         default: 0
       ruby-version:            { type: string, default: "3.3" }
       kamal-version:           { type: string, default: "" }
+      bundler-cache:
+        description: Run `bundle install` (with caching) on the runner. Needed when `base-secrets-file` shells out to `bin/rails credentials:fetch`.
+        type: string
+        default: "false"
       ssh-user:                { type: string, default: deploy }
       ssh-port:                { type: string, default: "22" }
 
@@ -188,6 +192,7 @@ jobs:
         with:
           ruby-version: ${{ inputs.ruby-version }}
           kamal-version: ${{ inputs.kamal-version }}
+          bundler-cache: ${{ inputs.bundler-cache }}
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
           registry-username: ${{ secrets.KAMAL_REGISTRY_USERNAME }}
           registry-password: ${{ secrets.KAMAL_REGISTRY_PASSWORD }}
@@ -385,6 +390,7 @@ $msg" >/dev/null || true
         with:
           ruby-version: ${{ inputs.ruby-version }}
           kamal-version: ${{ inputs.kamal-version }}
+          bundler-cache: ${{ inputs.bundler-cache }}
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
           setup-buildx: "false"
           setup-gha-cache: "false"

@@ -120,6 +120,10 @@ inputs:
 
   ruby-version:               { required: false, default: "3.3" }
   kamal-version:              { required: false, default: "" }
+  bundler-cache:
+    description: When `true`, runs `bundle install` (with caching) during setup. Needed if your `base-secrets-file` shells out to `bin/rails credentials:fetch` (or any other `bundle exec`) at deploy time. Default `false`.
+    required: false
+    default: "false"
   ssh-user:                   { required: false, default: deploy }
   ssh-port:                   { required: false, default: "22" }
 
@@ -225,6 +229,7 @@ runs:
       with:
         ruby-version: ${{ inputs.ruby-version }}
         kamal-version: ${{ inputs.kamal-version }}
+        bundler-cache: ${{ inputs.bundler-cache }}
         ssh-private-key: ${{ env.SSH_PRIVATE_KEY }}
         setup-buildx: ${{ steps.dispatch.outputs.mode == 'deploy' && 'true' || 'false' }}
         setup-gha-cache: ${{ steps.dispatch.outputs.mode == 'deploy' && 'true' || 'false' }}

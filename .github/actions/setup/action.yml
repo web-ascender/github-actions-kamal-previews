@@ -16,6 +16,15 @@ inputs:
   ssh-private-key:
     description: Private key registered with the deploy host. Loaded into ssh-agent.
     required: true
+  bundler-cache:
+    description: |
+      When `true`, run `bundle install` (with caching) on the runner.
+      Needed when your `base-secrets-file` shells out to `bin/rails
+      credentials:fetch` (or any other `bundle exec` command) — Kamal
+      evaluates the secrets file on the runner before deploying, so the
+      runner needs the gem set installed. Default `false`.
+    required: false
+    default: "false"
   setup-buildx:
     description: Whether to install Docker Buildx (needed for `kamal build`).
     required: false
@@ -44,7 +53,7 @@ runs:
       uses: ruby/setup-ruby@v1
       with:
         ruby-version: ${{ inputs.ruby-version }}
-        bundler-cache: false
+        bundler-cache: ${{ inputs.bundler-cache }}
 
     - name: Install Kamal
       shell: bash
