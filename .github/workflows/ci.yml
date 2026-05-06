@@ -42,24 +42,26 @@ jobs:
           args: -color
 
   manifest-template-check:
-    name: Reject \${{ secrets.* }} in action manifests
-    # GitHub's action manifest loader parses every field for `${{ ... }}`
-    # template expressions and rejects any whose context (e.g. `secrets`)
-    # isn't available at action-load time — including occurrences inside
-    # `description:` docstrings. The `$${{` escape doesn't apply here.
-    # Reject any such occurrence in action.yml files.
+    name: Reject \${{ ... }} in action description fields
+    # GitHub's action manifest loader parses every `description:` field for
+    # `${{ ... }}` template expressions at action-load time and rejects any
+    # whose context isn't available (secrets, github, env, steps, …) — and
+    # NONE of those contexts are available when a manifest is being loaded.
+    # The `$${{` escape doesn't apply at this layer. Strip them.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: |
           set -euo pipefail
-          violators=$(grep -rln '\${{' action.yml sweep/action.yml .github/actions/*/action.yml 2>/dev/null | xargs -I{} grep -l 'secrets\.' {} 2>/dev/null || true)
-          # Filter to files that actually have `${{ secrets.X }}` (full match)
           fail=0
+          # Catch single-line `description: … ${{ … }} …` patterns in any
+          # action manifest. Multi-line description blocks aren't covered
+          # by this regex but are caught by the runner-side parse on first
+          # consumer — at which point we'd add another fix here.
           for f in action.yml sweep/action.yml $(ls .github/actions/*/action.yml 2>/dev/null); do
             [ -f "$f" ] || continue
-            if grep -nE '\$\{\{[^}]*secrets\.' "$f"; then
-              echo "::error file=$f::action manifests cannot reference secrets.* in any field — even in description docstrings, GitHub's loader will reject it."
+            if grep -nE 'description:.*\$\{\{' "$f"; then
+              echo "::error file=$f::description fields can't contain \${{ ... }} expressions — GitHub's manifest loader will try to evaluate them and reject the action."
               fail=1
             fi
           done

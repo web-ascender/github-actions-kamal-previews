@@ -6,7 +6,7 @@ description: |
 
 inputs:
   branch-name:
-    description: Source branch name (typically `${{ github.head_ref }}` or `${{ github.event.ref }}`).
+    description: Source branch name (typically `github.head_ref` for PRs or `github.event.ref` for delete events).
     required: true
   base-deploy-file:
     description: Path to the base Kamal deploy file (e.g. config/deploy.staging.yml).
