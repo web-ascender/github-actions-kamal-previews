@@ -108,6 +108,15 @@ inputs:
     description: Bash-glob pattern; only branches matching it get previews. Empty = every PR. Teardowns ignore the pattern (they always run).
     required: false
     default: ""
+  max-active-previews:
+    description: |
+      Hard cap on concurrent active previews. The deploy step refuses to
+      start a NEW preview when this many are already active (an existing
+      preview being re-deployed doesn't count against the cap). 0 (default)
+      = unlimited. Counts environments named `preview-*` whose latest
+      deployment status isn't `inactive`/`removed`/`failure`/`error`.
+    required: false
+    default: "0"
 
   ruby-version:               { required: false, default: "3.3" }
   kamal-version:              { required: false, default: "" }
@@ -330,6 +339,54 @@ runs:
         echo "path=$resolved" >> "$GITHUB_OUTPUT"
 
     # ── DEPLOY PATH ──────────────────────────────────────────────────────
+    - name: Enforce max-active-previews cap
+      if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true' && inputs.max-active-previews != '0'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        MAX_ACTIVE: ${{ inputs.max-active-previews }}
+        MY_ENV: preview-${{ steps.config.outputs.slug }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+        # List every deployment whose latest status is "active" for envs
+        # named `preview-*`. Exclude our OWN env so a re-deploy never gets
+        # blocked by the cap.
+        mapfile -t active_envs < <(
+          gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GH_REPO/environments" --paginate \
+            --jq '.environments[]?.name // .[]?.name' \
+            | grep -E '^preview-' || true
+        )
+        active_count=0
+        for env in "${active_envs[@]}"; do
+          [ "$env" = "$MY_ENV" ] && continue
+          deployment_id="$(gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GH_REPO/deployments?environment=${env}&per_page=1" \
+            --jq '.[0].id // empty' || true)"
+          [ -z "$deployment_id" ] && continue
+          latest_state="$(gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/$GH_REPO/deployments/${deployment_id}/statuses?per_page=1" \
+            --jq '.[0].state // empty' || true)"
+          case "$latest_state" in
+            ""|inactive|removed|failure|error) ;;
+            *) active_count=$((active_count + 1)) ;;
+          esac
+        done
+
+        echo "Active preview environments (excluding this one): $active_count / $MAX_ACTIVE cap"
+        if [ "$active_count" -ge "$MAX_ACTIVE" ]; then
+          msg="🚦 **Preview cap reached.** ${active_count} active preview environments are already running, which meets the cap of \`max-active-previews=${MAX_ACTIVE}\`. Close another preview PR (or wait for it to be torn down) and re-run this workflow."
+          if [ -n "${PR_NUMBER:-}" ]; then
+            gh api --method POST "/repos/$GH_REPO/issues/${PR_NUMBER}/comments" \
+              -f body="<!-- kamal-previews:status -->
+$msg" >/dev/null || true
+          fi
+          echo "::error::$msg"
+          exit 1
+        fi
+
     - if: steps.dispatch.outputs.mode == 'deploy' && steps.branch.outputs.match == 'true'
       uses: ./.kamal-previews/.github/actions/deployment-status
       with:
