@@ -89,7 +89,7 @@ jobs:
           deploy-host:         staging.example.com
           database-engine:     postgres
           databases: |
-            DATABASE_NAME=myapp_staging:myapp_{db_slug}
+            DATABASE_URL=myapp_staging:myapp_{db_slug}
         env:
           SSH_PRIVATE_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
           # No DB credentials needed here — the action sources

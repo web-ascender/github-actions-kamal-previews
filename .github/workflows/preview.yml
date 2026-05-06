@@ -221,23 +221,86 @@ jobs:
       - id: db_admin_url
         if: inputs.database-engine == 'postgres' || inputs.database-engine == 'mysql'
         env:
-          EXPLICIT_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+          EXPLICIT_URL:      ${{ secrets.DATABASE_ADMIN_URL }}
           BASE_SECRETS_FILE: ${{ inputs.base-secrets-file }}
-          VAR_NAME: ${{ inputs.database-admin-url-var }}
-          RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+          VAR_NAME:          ${{ inputs.database-admin-url-var }}
+          RAILS_MASTER_KEY:  ${{ secrets.RAILS_MASTER_KEY }}
+          DATABASES_FULL:    ${{ steps.config.outputs.databases_resolved }}
+          SECRETS_FILE_OUT:  ${{ steps.config.outputs.secrets_file }}
         run: |
           set -euo pipefail
-          url=""
+
+          url_env_names() {
+            if [ -z "${DATABASES_FULL:-}" ]; then return; fi
+            while IFS= read -r entry; do
+              stripped="${entry#"${entry%%[![:space:]]*}"}"
+              stripped="${stripped%"${stripped##*[![:space:]]}"}"
+              [ -z "$stripped" ] && continue
+              case "$stripped" in \#*) continue ;; esac
+              name="${stripped%%=*}"
+              case "$name" in *_URL|*_url) printf '%s\n' "$name" ;; esac
+            done <<< "$DATABASES_FULL"
+          }
+
+          target_for() {
+            local needle="$1"
+            while IFS= read -r entry; do
+              stripped="${entry#"${entry%%[![:space:]]*}"}"
+              stripped="${stripped%"${stripped##*[![:space:]]}"}"
+              [ -z "$stripped" ] && continue
+              case "$stripped" in \#*) continue ;; esac
+              if [ "${stripped%%=*}" = "$needle" ]; then
+                local rest="${stripped#*=}"
+                printf '%s' "${rest#*:}"
+                return
+              fi
+            done <<< "$DATABASES_FULL"
+          }
+
+          # ── Resolve admin URL ────────────────────────────────────────
+          admin_url=""
           if [ -n "${EXPLICIT_URL:-}" ]; then
-            url="$EXPLICIT_URL"
+            admin_url="$EXPLICIT_URL"
           elif [ -n "$BASE_SECRETS_FILE" ] && [ -f "$BASE_SECRETS_FILE" ]; then
-            url="$(set -a; . "$BASE_SECRETS_FILE"; set +a; printf '%s' "${!VAR_NAME-}")"
+            admin_url="$(set -a; . "$BASE_SECRETS_FILE"; set +a; printf '%s' "${!VAR_NAME-}")"
           fi
-          if [ -z "$url" ]; then
+          if [ -z "$admin_url" ]; then
             echo "::error::Could not resolve a database admin URL. Set the DATABASE_ADMIN_URL secret or point base-secrets-file at a file that exposes \$${VAR_NAME}."; exit 1
           fi
-          echo "::add-mask::$url"
-          echo "KAMAL_PREVIEWS_DB_ADMIN_URL=$url" >> "$GITHUB_ENV"
+          echo "::add-mask::$admin_url"
+          echo "KAMAL_PREVIEWS_DB_ADMIN_URL=$admin_url" >> "$GITHUB_ENV"
+
+          # ── Rewrite per-PR URLs for *_URL entries ────────────────────
+          url_envs="$(url_env_names || true)"
+          if [ -z "$url_envs" ]; then exit 0; fi
+          if [ -z "${BASE_SECRETS_FILE:-}" ] || [ ! -f "$BASE_SECRETS_FILE" ]; then
+            echo "::error::URL-mode databases entries require a base-secrets-file."; exit 1
+          fi
+
+          captured="$(
+            set -a
+            . "$BASE_SECRETS_FILE"
+            set +a
+            while IFS= read -r name; do
+              [ -z "$name" ] && continue
+              printf '%s\t%s\n' "$name" "${!name-}"
+            done <<< "$url_envs"
+          )"
+
+          while IFS=$'\t' read -r env_name source_url; do
+            [ -z "$env_name" ] && continue
+            if [ -z "$source_url" ]; then
+              echo "::error::Could not read \$${env_name} from $BASE_SECRETS_FILE."; exit 1
+            fi
+            target="$(target_for "$env_name")"
+            rewritten="$(printf '%s' "$source_url" | sed -E "s|^([a-zA-Z+]+://[^/]+)/[^?#]*|\1/${target}|")"
+            echo "::add-mask::$rewritten"
+            kp_var="KAMAL_PREVIEWS_${env_name}"
+            echo "${kp_var}=${rewritten}" >> "$GITHUB_ENV"
+            if [ -n "${SECRETS_FILE_OUT:-}" ] && [ -f "$SECRETS_FILE_OUT" ]; then
+              printf '\n# kamal-previews: per-PR override of %s\n%s=$%s\n' "$env_name" "$env_name" "$kp_var" >> "$SECRETS_FILE_OUT"
+            fi
+          done <<< "$captured"
 
       - name: Enforce max-active-previews cap
         if: inputs.max-active-previews > 0

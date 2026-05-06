@@ -400,6 +400,74 @@ class ConfigGeneratorTest < Minitest::Test
     end
   end
 
+  def test_url_suffix_entries_skip_env_clear_and_land_in_env_secret
+    in_tmpdir do
+      write_base_deploy
+      result = KamalPreviews::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com",
+        databases: <<~SPEC
+          DATABASE_URL=myapp_staging:myapp_{db_slug}
+          QUEUE_DATABASE_URL=myapp_staging_queue:myapp_queue_{db_slug}
+        SPEC
+      ).call
+
+      yaml = YAML.safe_load_file(result.deploy_file)
+
+      # No env.clear entries for URL-mode databases — credentials don't
+      # belong in plaintext YAML.
+      refute yaml["env"]["clear"].key?("DATABASE_URL")
+      refute yaml["env"]["clear"].key?("QUEUE_DATABASE_URL")
+
+      # env.secret gets each URL-mode env name appended. Existing
+      # SECRET_KEY_BASE from the base config is preserved.
+      assert_includes yaml["env"]["secret"], "SECRET_KEY_BASE"
+      assert_includes yaml["env"]["secret"], "DATABASE_URL"
+      assert_includes yaml["env"]["secret"], "QUEUE_DATABASE_URL"
+
+      # databases_full output still carries every entry (downstream uses it
+      # to drive cloning + URL rewriting).
+      assert_includes result.databases_full, "DATABASE_URL=myapp_staging:myapp_awesome_thing"
+      assert_includes result.databases_full, "QUEUE_DATABASE_URL=myapp_staging_queue:myapp_queue_awesome_thing"
+    end
+  end
+
+  def test_mixed_url_and_name_entries_route_correctly
+    in_tmpdir do
+      write_base_deploy
+      result = KamalPreviews::ConfigGenerator.new(
+        namer_result: namer,
+        base_deploy_file: "config/deploy.staging.yml",
+        domain_suffix: "preview.example.com",
+        databases: <<~SPEC
+          DATABASE_URL=myapp_staging:myapp_{db_slug}
+          ANALYTICS_DATABASE_NAME=analytics_staging:analytics_{db_slug}
+        SPEC
+      ).call
+
+      yaml = YAML.safe_load_file(result.deploy_file)
+      # URL → env.secret only
+      refute yaml["env"]["clear"].key?("DATABASE_URL")
+      assert_includes yaml["env"]["secret"], "DATABASE_URL"
+      # Name → env.clear only
+      assert_equal "analytics_awesome_thing", yaml["env"]["clear"]["ANALYTICS_DATABASE_NAME"]
+      refute_includes yaml["env"]["secret"], "ANALYTICS_DATABASE_NAME"
+    end
+  end
+
+  def test_url_mode_detection_on_database_spec
+    spec_url = KamalPreviews::ConfigGenerator::DatabaseSpec.new(env_name: "DATABASE_URL", source: "x", pattern: "y")
+    spec_url_lower = KamalPreviews::ConfigGenerator::DatabaseSpec.new(env_name: "Database_url", source: "x", pattern: "y")
+    spec_name = KamalPreviews::ConfigGenerator::DatabaseSpec.new(env_name: "DATABASE_NAME", source: "x", pattern: "y")
+    spec_url_prefix = KamalPreviews::ConfigGenerator::DatabaseSpec.new(env_name: "URL_PARSER", source: "x", pattern: "y")
+
+    assert spec_url.url_mode?
+    assert spec_url_lower.url_mode?
+    refute spec_name.url_mode?
+    refute spec_url_prefix.url_mode?, "URL must be a suffix, not anywhere in the name"
+  end
+
   def test_no_databases_writes_no_database_env_clear_entries
     in_tmpdir do
       write_base_deploy

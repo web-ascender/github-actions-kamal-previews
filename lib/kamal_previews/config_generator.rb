@@ -25,15 +25,31 @@ module KamalPreviews
     )
 
     # One entry in the `databases:` list. Source is the existing template DB
-    # being cloned; pattern resolves to the per-PR target DB name. The
-    # resolved name is written to `env.clear[env_name]` so the consumer's
-    # secrets file can build its DB URL from it.
+    # being cloned; pattern resolves to the per-PR target DB name. There
+    # are two delivery modes, picked automatically from the env-var suffix:
+    #
+    #   - `*_URL`  (e.g. DATABASE_URL): the action reads the original URL
+    #     from base-secrets-file, swaps in the resolved target as the
+    #     dbname path segment, and injects the rewritten URL via env.secret
+    #     at deploy time. Container app code reads ENV_NAME and gets a
+    #     fully-formed connection URL pointing at the per-PR clone — the
+    #     user's database.yml / credentials / secrets file stay unchanged.
+    #
+    #   - any other name (e.g. DATABASE_NAME): the resolved target name is
+    #     written to env.clear[ENV_NAME] and exported to $GITHUB_ENV so
+    #     the consumer can build URLs themselves if they want.
     DatabaseSpec = Struct.new(:env_name, :source, :pattern, keyword_init: true) do
       def resolve(slug:, db_slug:)
         pattern
           .gsub("{slug}", slug)
           .gsub("{db_slug}", db_slug)
           .gsub("{base_database}", source.to_s)
+      end
+
+      # URL-mode if the env name ends in `_URL` (case-insensitive). Anything
+      # else is treated as a database-name entry.
+      def url_mode?
+        env_name.to_s =~ /_URL\z/i ? true : false
       end
     end
 
@@ -142,16 +158,24 @@ module KamalPreviews
 
       databases_resolved = {}
       databases_full = []
+      databases_url_targets = {}
+      databases_name_targets = {}
       @databases.each do |spec|
         target = spec.resolve(slug: @namer_result.slug, db_slug: @namer_result.db_slug)
         databases_resolved[spec.env_name] = target
         databases_full << "#{spec.env_name}=#{spec.source}:#{target}"
+        if spec.url_mode?
+          databases_url_targets[spec.env_name] = target
+        else
+          databases_name_targets[spec.env_name] = target
+        end
       end
 
       mutated = mutate_yaml(base_yaml,
         service_name: service_name,
         proxy_host: proxy_host,
-        databases_resolved: databases_resolved)
+        databases_name_targets: databases_name_targets,
+        databases_url_envs: databases_url_targets.keys)
 
       deploy_file = "config/deploy.#{destination}.yml"
       FileUtils.mkdir_p(File.dirname(deploy_file))
@@ -220,7 +244,7 @@ module KamalPreviews
         .gsub("{base_service}", base_service.to_s)
     end
 
-    def mutate_yaml(yaml, service_name:, proxy_host:, databases_resolved:)
+    def mutate_yaml(yaml, service_name:, proxy_host:, databases_name_targets:, databases_url_envs:)
       out = deep_dup(yaml)
 
       out["service"] = service_name
@@ -244,12 +268,18 @@ module KamalPreviews
       out["env"]["clear"]["FEATURE_BRANCH_LABEL"] = @env_label
       out["env"]["clear"]["FEATURE_BRANCH_SLUG"] = @namer_result.slug
       out["env"]["clear"]["FEATURE_BRANCH_DB_SLUG"] = @namer_result.db_slug
-      databases_resolved.each { |k, v| out["env"]["clear"][k] = v }
+      # Name-mode entries land in env.clear (resolved name visible to the
+      # container; consumer wires it into URLs however they want).
+      databases_name_targets.each { |k, v| out["env"]["clear"][k] = v }
       @env_overrides.each { |k, v| out["env"]["clear"][k.to_s] = v.to_s }
 
-      if @env_secret_overrides.any?
+      # URL-mode entries land in env.secret. The actual rewritten URL is
+      # injected at deploy time by the action, via runtime env + an
+      # appended override line in the per-PR `.kamal/secrets.<dest>` file.
+      url_secrets = databases_url_envs + @env_secret_overrides
+      if url_secrets.any?
         out["env"]["secret"] ||= []
-        out["env"]["secret"].concat(@env_secret_overrides)
+        out["env"]["secret"].concat(url_secrets)
         out["env"]["secret"].uniq!
       end
 

@@ -30,7 +30,7 @@ description: |
                 deploy-host:         staging.example.com
                 database-engine:     postgres
                 databases: |
-                  DATABASE_NAME=myapp_staging:myapp_{db_slug}
+                  DATABASE_URL=myapp_staging:myapp_{db_slug}
               env:
                 SSH_PRIVATE_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
                 # Required only if the secrets file shells out to
@@ -73,13 +73,24 @@ inputs:
       Multi-line list of databases to clone (postgres/mysql only). One entry
       per line, format `ENV_NAME=source_db:target_pattern`. Tokens in the
       pattern: `{slug}`, `{db_slug}`, `{base_database}` (= source).
-      Each entry produces a clone-on-deploy, an `env.clear[ENV_NAME]` entry
-      with the resolved target name, an `$ENV_NAME` runner env export (so
-      kamal's secrets-file evaluation can use it), and a drop-on-teardown.
-      Example:
-        DATABASE_NAME=myapp_staging:myapp_{db_slug}
-        QUEUE_DATABASE_NAME=myapp_staging_queue:myapp_queue_{db_slug}
-        CACHE_DATABASE_NAME=myapp_staging_cache:myapp_cache_{db_slug}
+
+      Behavior depends on the env-name suffix:
+
+      - `*_URL` (e.g. `DATABASE_URL`, `QUEUE_DATABASE_URL`): the action
+        clones the DB, sources `base-secrets-file` to read the original
+        URL, swaps the dbname path segment for the per-PR target, and
+        injects the rewritten URL into the deployed app via env.secret.
+        Your database.yml, Rails credentials, and existing secrets file
+        stay untouched. Recommended for most Rails apps.
+
+      - any other suffix (e.g. `*_NAME`): the resolved DB name is written
+        to env.clear and exported to $GITHUB_ENV. Use when your app reads
+        the name directly or you want to handle URL building yourself.
+
+      Example (Rails 8 multi-DB):
+        DATABASE_URL=myapp_staging:myapp_{db_slug}
+        QUEUE_DATABASE_URL=myapp_staging_queue:myapp_queue_{db_slug}
+        CACHE_DATABASE_URL=myapp_staging_cache:myapp_cache_{db_slug}
     required: false
     default: ""
   database-admin-url-var:
@@ -267,52 +278,83 @@ runs:
         cpu-limit: ${{ inputs.cpu-limit }}
         prefix-strip: ${{ inputs.prefix-strip }}
 
-    # ── Resolve admin URL for cloning (postgres/mysql only) ─────────────
-    # Source the secrets file once and pull DATABASE_URL (or whatever var
-    # the consumer named). Falls back to individual PG_/MYSQL_ env vars.
-    # Sets KAMAL_PREVIEWS_DB_ADMIN_URL on the runner env, also exporting it
-    # to $GITHUB_ENV so the resolved DB names that get appended later land
-    # in the same env table.
+    # ── Resolve admin URL + per-PR app URLs (postgres/mysql only) ───────
+    # Two jobs in one step:
+    #   1. Pick an admin URL for cloning (DATABASE_ADMIN_URL > sourced
+    #      DATABASE_URL > individual PG_/MYSQL_ fields).
+    #   2. For every `*_URL` entry in `databases:`, source the consumer's
+    #      base-secrets-file to get the original URL, swap the dbname
+    #      path segment for the per-PR target, and inject the rewritten
+    #      URL via $GITHUB_ENV + an appended override line in the
+    #      generated `.kamal/secrets.<dest>`. The user's database.yml,
+    #      Rails credentials, and existing secrets file stay untouched.
     - id: db_admin_url
       if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true' && (inputs.database-engine == 'postgres' || inputs.database-engine == 'mysql')
       shell: bash
       env:
-        EXPLICIT_URL: ${{ env.DATABASE_ADMIN_URL }}
+        EXPLICIT_URL:      ${{ env.DATABASE_ADMIN_URL }}
         BASE_SECRETS_FILE: ${{ inputs.base-secrets-file }}
-        VAR_NAME: ${{ inputs.database-admin-url-var }}
-        ENGINE: ${{ inputs.database-engine }}
-        FB_PG_HOST: ${{ env.PG_HOST }}
-        FB_PG_PORT: ${{ env.PG_PORT }}
-        FB_PG_USER: ${{ env.PG_USER }}
-        FB_PG_PASSWORD: ${{ env.PG_PASSWORD }}
-        FB_PG_SSLMODE: ${{ env.PG_SSLMODE }}
-        FB_MYSQL_HOST: ${{ env.MYSQL_HOST }}
-        FB_MYSQL_PORT: ${{ env.MYSQL_PORT }}
-        FB_MYSQL_USER: ${{ env.MYSQL_USER }}
+        VAR_NAME:          ${{ inputs.database-admin-url-var }}
+        DATABASES_FULL:    ${{ steps.config.outputs.databases_resolved }}
+        SECRETS_FILE_OUT:  ${{ steps.config.outputs.secrets_file }}
+        ENGINE:            ${{ inputs.database-engine }}
+        FB_PG_HOST:        ${{ env.PG_HOST }}
+        FB_PG_PORT:        ${{ env.PG_PORT }}
+        FB_PG_USER:        ${{ env.PG_USER }}
+        FB_PG_PASSWORD:    ${{ env.PG_PASSWORD }}
+        FB_PG_SSLMODE:     ${{ env.PG_SSLMODE }}
+        FB_MYSQL_HOST:     ${{ env.MYSQL_HOST }}
+        FB_MYSQL_PORT:     ${{ env.MYSQL_PORT }}
+        FB_MYSQL_USER:     ${{ env.MYSQL_USER }}
         FB_MYSQL_PASSWORD: ${{ env.MYSQL_PASSWORD }}
         FB_MYSQL_SSL_MODE: ${{ env.MYSQL_SSL_MODE }}
       run: |
         set -euo pipefail
 
-        url=""
-        if [ -n "${EXPLICIT_URL:-}" ]; then
-          url="$EXPLICIT_URL"
-        elif [ -n "$BASE_SECRETS_FILE" ] && [ -f "$BASE_SECRETS_FILE" ]; then
-          # Source in a subshell so the consumer's secrets file (which may
-          # shell out to `bin/rails credentials:fetch` etc.) doesn't pollute
-          # *our* env. Then read the named var.
-          url="$(set -a; . "$BASE_SECRETS_FILE"; set +a; printf '%s' "${!VAR_NAME-}")"
-        fi
+        # Helper: list all *_URL env names declared in `databases:` input.
+        url_env_names() {
+          if [ -z "${DATABASES_FULL:-}" ]; then return; fi
+          while IFS= read -r entry; do
+            stripped="${entry#"${entry%%[![:space:]]*}"}"
+            stripped="${stripped%"${stripped##*[![:space:]]}"}"
+            [ -z "$stripped" ] && continue
+            case "$stripped" in \#*) continue ;; esac
+            name="${stripped%%=*}"
+            case "$name" in *_URL|*_url) printf '%s\n' "$name" ;; esac
+          done <<< "$DATABASES_FULL"
+        }
 
-        if [ -z "$url" ]; then
-          # Last-resort: build from individual fields.
+        # Helper: target name for a given ENV_NAME (parsed from databases input).
+        target_for() {
+          local needle="$1"
+          while IFS= read -r entry; do
+            stripped="${entry#"${entry%%[![:space:]]*}"}"
+            stripped="${stripped%"${stripped##*[![:space:]]}"}"
+            [ -z "$stripped" ] && continue
+            case "$stripped" in \#*) continue ;; esac
+            if [ "${stripped%%=*}" = "$needle" ]; then
+              local rest="${stripped#*=}"
+              printf '%s' "${rest#*:}"
+              return
+            fi
+          done <<< "$DATABASES_FULL"
+        }
+
+        # ── Step 1: determine admin URL ───────────────────────────────
+        admin_url=""
+        if [ -n "${EXPLICIT_URL:-}" ]; then
+          admin_url="$EXPLICIT_URL"
+        elif [ -n "$BASE_SECRETS_FILE" ] && [ -f "$BASE_SECRETS_FILE" ]; then
+          admin_url="$(set -a; . "$BASE_SECRETS_FILE"; set +a; printf '%s' "${!VAR_NAME-}")"
+        fi
+        if [ -z "$admin_url" ]; then
           case "$ENGINE" in
             postgres)
               if [ -n "${FB_PG_HOST:-}" ] && [ -n "${FB_PG_USER:-}" ]; then
                 pp=""; [ -n "${FB_PG_PASSWORD:-}" ] && pp=":$FB_PG_PASSWORD"
                 port="${FB_PG_PORT:-5432}"
                 qs=""; [ -n "${FB_PG_SSLMODE:-}" ] && qs="?sslmode=$FB_PG_SSLMODE"
-                url="postgres://${FB_PG_USER}${pp}@${FB_PG_HOST}:${port}/postgres${qs}"
+                admin_url="postgres://${FB_PG_USER}${pp}@${FB_PG_HOST}:${port}/postgres${qs}"
               fi
               ;;
             mysql)
@@ -320,20 +362,73 @@ runs:
                 pp=""; [ -n "${FB_MYSQL_PASSWORD:-}" ] && pp=":$FB_MYSQL_PASSWORD"
                 port="${FB_MYSQL_PORT:-3306}"
                 qs=""; [ -n "${FB_MYSQL_SSL_MODE:-}" ] && qs="?ssl-mode=$FB_MYSQL_SSL_MODE"
-                url="mysql://${FB_MYSQL_USER}${pp}@${FB_MYSQL_HOST}:${port}/mysql${qs}"
+                admin_url="mysql://${FB_MYSQL_USER}${pp}@${FB_MYSQL_HOST}:${port}/mysql${qs}"
               fi
               ;;
           esac
         fi
-
-        if [ -z "$url" ]; then
+        if [ -z "$admin_url" ]; then
           echo "::error::Could not resolve a database admin URL. Set DATABASE_ADMIN_URL in env, point base-secrets-file at a file that exposes \$${VAR_NAME}, or provide PG_/MYSQL_ env vars."; exit 1
         fi
+        echo "::add-mask::$admin_url"
+        echo "KAMAL_PREVIEWS_DB_ADMIN_URL=$admin_url" >> "$GITHUB_ENV"
 
-        # Mask in logs and pass forward via GITHUB_ENV (not stdout/outputs —
-        # the URL contains credentials).
-        echo "::add-mask::$url"
-        echo "KAMAL_PREVIEWS_DB_ADMIN_URL=$url" >> "$GITHUB_ENV"
+        # ── Step 2: rewrite per-PR URLs for *_URL entries ────────────
+        url_envs="$(url_env_names || true)"
+        if [ -z "$url_envs" ]; then
+          # No URL-mode entries — nothing more to do.
+          exit 0
+        fi
+        if [ -z "${BASE_SECRETS_FILE:-}" ] || [ ! -f "$BASE_SECRETS_FILE" ]; then
+          echo "::error::URL-mode databases entries require a base-secrets-file that exposes the original URL for each entry."; exit 1
+        fi
+
+        # Source base-secrets-file once and capture every URL-mode source
+        # URL into a captured TSV (env_name<TAB>url, one per line).
+        captured="$(
+          set -a
+          . "$BASE_SECRETS_FILE"
+          set +a
+          while IFS= read -r name; do
+            [ -z "$name" ] && continue
+            printf '%s\t%s\n' "$name" "${!name-}"
+          done <<< "$url_envs"
+        )"
+
+        while IFS=$'\t' read -r env_name source_url; do
+          [ -z "$env_name" ] && continue
+          if [ -z "$source_url" ]; then
+            echo "::error::Could not read \$${env_name} from $BASE_SECRETS_FILE — make sure your secrets file populates it."; exit 1
+          fi
+          target="$(target_for "$env_name")"
+          if [ -z "$target" ]; then
+            echo "::error::Internal: could not find target name for $env_name."; exit 1
+          fi
+
+          # Swap the dbname path segment. Path is between the authority
+          # (scheme://host[:port]) and the next `?`/`#`/end. Userinfo,
+          # query, and fragment are preserved byte-for-byte — we never
+          # parse them, so password URL-encoding is safe.
+          rewritten="$(printf '%s' "$source_url" | sed -E "s|^([a-zA-Z+]+://[^/]+)/[^?#]*|\1/${target}|")"
+          if [ "$rewritten" = "$source_url" ] && [ -n "$source_url" ]; then
+            echo "::warning::Could not rewrite \$${env_name} (no path segment found in URL?). Using source URL unchanged."
+          fi
+
+          echo "::add-mask::$rewritten"
+          kp_var="KAMAL_PREVIEWS_${env_name}"
+          echo "${kp_var}=${rewritten}" >> "$GITHUB_ENV"
+
+          # Append an override line to the per-PR secrets file. Kamal
+          # evaluates that file in a subshell at deploy time; the user's
+          # original `bin/rails credentials:fetch` runs first, then our
+          # appended line wins because bash assignment-order means the
+          # last assignment to a variable in the same shell wins.
+          if [ -n "${SECRETS_FILE_OUT:-}" ] && [ -f "$SECRETS_FILE_OUT" ]; then
+            printf '\n# kamal-previews: per-PR override of %s\n%s=$%s\n' "$env_name" "$env_name" "$kp_var" >> "$SECRETS_FILE_OUT"
+          else
+            echo "::error::Cannot append URL override — no per-PR secrets file was generated. Did you set base-secrets-file?"; exit 1
+          fi
+        done <<< "$captured"
 
     - id: sqlite_path
       if: steps.dispatch.outputs.mode != 'skip' && steps.branch.outputs.match == 'true' && inputs.database-engine == 'sqlite'

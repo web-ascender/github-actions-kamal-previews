@@ -18,51 +18,60 @@ secrets the GitHub Actions workflow itself needs are:
 Everything else flows through Kamal's own `kamal secrets` mechanism,
 which is fully under your control.
 
-## Per-PR DB names in your secrets file
+## Per-PR database connection — two modes
 
-Each entry in `databases:` (e.g. `DATABASE_NAME=myapp_staging:myapp_{db_slug}`)
-gives the deployed container its per-PR DB name in `env.clear`. But your
-`.kamal/secrets.<dest>` file usually needs to *build a URL* from that
-name, not just read it. The same names are exported to the GitHub Actions
-runner env, so the secrets file can read them when Kamal evaluates it.
+Each entry in `databases:` is named after the env var the per-PR app
+should see. The action picks behavior based on the suffix:
 
-The four common patterns:
+### `*_URL` entries — automatic URL rewriting (recommended)
 
-### 1. Rewrite the URL fetched from Rails credentials
-
-```bash
-# .kamal/secrets.preview
-RAILS_MASTER_KEY=$RAILS_MASTER_KEY
-
-# Pull the staging URL, swap in the per-PR DB name. $DATABASE_NAME comes
-# from kamal-previews via the runner env.
-_BASE=$(bin/rails credentials:fetch --environment staging database_url)
-DATABASE_URL=$(echo "$_BASE" | sed -E "s|/[^/?]+(\\?|$)|/$DATABASE_NAME\\1|")
-QUEUE_DATABASE_URL=$(echo "$_BASE" | sed -E "s|/[^/?]+(\\?|$)|/$QUEUE_DATABASE_NAME\\1|")
-CACHE_DATABASE_URL=$(echo "$_BASE" | sed -E "s|/[^/?]+(\\?|$)|/$CACHE_DATABASE_NAME\\1|")
+```yaml
+databases: |
+  DATABASE_URL=myapp_staging:myapp_{db_slug}
+  QUEUE_DATABASE_URL=myapp_staging_queue:myapp_queue_{db_slug}
 ```
 
-### 2. Build URLs from individual env-var components
+For each entry, the action:
 
-If you store host/user/password as separate values:
+1. Clones source DB → per-PR target DB
+2. Sources `base-secrets-file` to read the original URL (e.g. `$DATABASE_URL`)
+3. Rewrites the URL's database-name path segment to the per-PR target —
+   scheme, userinfo, host, port, query string are preserved byte-for-byte
+4. Injects the rewritten URL via `env.secret` at deploy time, by appending
+   an override line to the generated `.kamal/secrets.<dest>` file
 
-```bash
-# .kamal/secrets.preview
-DATABASE_URL=postgres://${PG_USER}:${PG_PASSWORD}@${PG_HOST}/${DATABASE_NAME}?sslmode=verify-full
+**Your `database.yml`, Rails credentials, and existing
+`.kamal/secrets.staging` stay unchanged.** The container sees
+`DATABASE_URL=postgresql://user:pass@host:5432/myapp_<slug>?sslmode=...`
+— a fully-formed URL pointing at the per-PR clone, with the same
+credentials your staging app uses.
+
+### `*_NAME` (or any non-`_URL`) entries — name-only injection
+
+```yaml
+databases: |
+  DATABASE_NAME=myapp_staging:myapp_{db_slug}
 ```
 
-### 3. App reads `DATABASE_NAME` directly
+The resolved per-PR DB name (e.g. `myapp_<slug>`) is written to
+`env.clear[DATABASE_NAME]` AND exported to `$GITHUB_ENV`. Use this when
+your app reads `ENV["DATABASE_NAME"]` directly in `database.yml`, or when
+you want to build URLs yourself in your secrets file. Examples:
 
-If your `database.yml` for the staging environment uses
-`<%= ENV["DATABASE_NAME"] %>` or similar, you don't need a special
-secrets file at all — the env var lands in `env.clear` and the app
-reads it.
+**`database.yml` reads the name directly** — no secrets-file changes:
+```yaml
+staging:
+  primary:
+    database: <%= ENV["DATABASE_NAME"] %>
+    # …host/user/password from URL or other env
+```
 
-### 4. Look up secrets keyed by per-PR DB name
+**Build URLs in your secrets file** — `$DATABASE_NAME` lives in the runner env:
+```bash
+DATABASE_URL=postgres://${PG_USER}:${PG_PASSWORD}@${PG_HOST}/${DATABASE_NAME}?sslmode=require
+```
 
-For 1Password / Doppler / AWS Secrets Manager, you can use
-`$DATABASE_NAME` in the lookup key:
-
+**Look up secrets keyed by per-PR DB name** (1Password / Doppler / etc.):
 ```bash
 SECRETS=$(kamal secrets fetch --adapter doppler myapp "preview-${DATABASE_NAME}")
 DATABASE_URL=$(kamal secrets extract DATABASE_URL "$SECRETS")

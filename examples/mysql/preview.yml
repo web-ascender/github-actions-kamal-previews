@@ -35,7 +35,7 @@ jobs:
           deploy-host:         staging.example.com
           database-engine:     mysql
           databases: |
-            DATABASE_NAME=myapp_staging:myapp_{db_slug}
+            DATABASE_URL=myapp_staging:myapp_{db_slug}
           image-tag: ${{ github.event.pull_request.head.sha }}
           memory-limit: "512m"
           cpu-limit:    "0.5"

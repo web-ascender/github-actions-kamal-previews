@@ -60,14 +60,16 @@ jobs:
           deploy-host:         staging.example.com
           database-engine:     postgres
 
-          # One entry per database. Each becomes a clone-on-deploy, an
-          # env.clear[ENV_NAME] write, a $ENV_NAME runner-env export
-          # (visible to .kamal/secrets.* shell evaluation), and a drop on
-          # teardown. For Rails 8 multi-DB apps, list each Solid database:
+          # One entry per database. ENV_NAME ending in `_URL` triggers
+          # auto-rewriting: kamal-previews reads the URL from your
+          # base-secrets-file, swaps the dbname for the per-PR target,
+          # and injects via env.secret — no database.yml or secrets file
+          # changes required. For Rails 8 multi-DB apps, list each Solid
+          # database:
           databases: |
-            DATABASE_NAME=myapp_staging:myapp_{db_slug}
-            # QUEUE_DATABASE_NAME=myapp_staging_queue:myapp_queue_{db_slug}
-            # CACHE_DATABASE_NAME=myapp_staging_cache:myapp_cache_{db_slug}
+            DATABASE_URL=myapp_staging:myapp_{db_slug}
+            # QUEUE_DATABASE_URL=myapp_staging_queue:myapp_queue_{db_slug}
+            # CACHE_DATABASE_URL=myapp_staging_cache:myapp_cache_{db_slug}
 
           # Optional: tag the per-PR image with the head SHA.
           image-tag: ${{ github.event.pull_request.head.sha }}

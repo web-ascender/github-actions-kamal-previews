@@ -20,18 +20,36 @@ top-level composite actions.
 | Input | Description |
 | --- | --- |
 | `database-engine`           | One of `postgres`, `mysql`, `sqlite`, `none`. Default `none`. |
-| `databases`                 | Multi-line list (postgres/mysql). One entry per line, format `ENV_NAME=source_db:target_pattern`. Pattern tokens: `{slug}`, `{db_slug}`, `{base_database}` (= source). Each entry produces a clone-on-deploy, an `env.clear[ENV_NAME]` write, a `$ENV_NAME` runner-env export, and a drop-on-teardown. |
+| `databases`                 | Multi-line list (postgres/mysql). One entry per line, format `ENV_NAME=source_db:target_pattern`. Pattern tokens: `{slug}`, `{db_slug}`, `{base_database}` (= source). Behavior depends on the env-name suffix — see below. |
 | `database-admin-url-var`    | Variable name to read from `base-secrets-file` as the admin connection URL. Default `DATABASE_URL`. |
 | `sqlite-source-path`        | Absolute path on the deploy host to the source SQLite file (engine=sqlite). |
 | `sqlite-target-path-pattern`| Pattern for the per-PR SQLite path (engine=sqlite). Tokens: `{slug}`, `{db_slug}`. |
 | `sqlite-also-clone`         | Space-separated suffixes for companion SQLite files (e.g. "_queue _cache _cable"). |
 
-The action resolves an admin URL for cloning in this order:
+#### `databases` entry behavior by suffix
+
+`*_URL` entries (e.g. `DATABASE_URL`, `QUEUE_DATABASE_URL`):
+1. Clones source DB → per-PR target DB.
+2. Sources `base-secrets-file` to read the original URL named `ENV_NAME`.
+3. Rewrites the URL's database-name path segment to the per-PR target — scheme, userinfo, host, port, query string preserved.
+4. Adds `ENV_NAME` to `env.secret` in the per-PR `deploy.<dest>.yml` and appends an override line to `.kamal/secrets.<dest>` so kamal injects the rewritten URL into the container at deploy time.
+
+Result: zero changes needed in your `database.yml`, Rails credentials, or existing secrets file.
+
+Any other suffix (e.g. `*_NAME`):
+1. Clones source DB → per-PR target DB.
+2. Writes the resolved name to `env.clear[ENV_NAME]` and exports `ENV_NAME=<resolved>` to `$GITHUB_ENV`.
+
+Result: the consumer wires the name into URLs themselves (in `database.yml`, in their secrets file, or in a credential lookup).
+
+#### Admin URL resolution
+
+For cloning, the action needs a URL with `CREATEDB` / `CREATE DATABASE` privilege:
 
 1. The `DATABASE_ADMIN_URL` secret/env var (explicit override).
-2. The variable named by `database-admin-url-var` (default `DATABASE_URL`), read from `base-secrets-file` after sourcing it. For Rails apps, this typically means the same URL `bin/rails credentials:fetch` returns at deploy time.
+2. The variable named by `database-admin-url-var` (default `DATABASE_URL`), read from `base-secrets-file` after sourcing it.
 
-The role in the URL must have `CREATEDB` (postgres) / `CREATE DATABASE` (mysql) privilege. If the URL exposed by your secrets file connects as a least-privilege app role, set `DATABASE_ADMIN_URL` to a separate admin URL.
+If the URL exposed by your secrets file connects as a least-privilege app role, set `DATABASE_ADMIN_URL` to a separate admin URL.
 
 ### Generation knobs
 
