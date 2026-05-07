@@ -148,6 +148,8 @@ runs:
                 printf 'PGUSER=%s\n' "$KP_DB_USER"
                 printf 'PGPASSWORD=%s\n' "$KP_DB_PASSWORD"
                 [ -n "${KP_DB_SSLMODE:-}" ] && printf 'PGSSLMODE=%s\n' "$KP_DB_SSLMODE"
+                # See clone action for why we forward the admin URL's dbname.
+                [ -n "${KP_DB_DBNAME:-}" ] && printf 'MAINTENANCE_DATABASE=%s\n' "$KP_DB_DBNAME"
                 printf 'TARGET_DATABASE=%s\n' "$tgt"
               } > "$local_env"
               ;;
