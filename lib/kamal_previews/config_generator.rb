@@ -239,12 +239,25 @@ module KamalPreviews
         shared = parse_yaml(sibling)
         if shared.is_a?(Hash)
           # Destination values win where they're set; the shared file fills
-          # in everything else.
-          data = shared.merge(data) { |_key, _shared_v, dest_v| dest_v }
+          # in everything else. Deep-merge so `env: { clear: {...}, secret: [...] }`
+          # in deploy.yml and `env: { clear: { RAILS_ENV: staging } }` in the
+          # destination file combine instead of clobbering — Kamal does this
+          # at deploy time, and our generator must match.
+          data = deep_merge(shared, data)
         end
       end
 
       data
+    end
+
+    def deep_merge(base, override)
+      base.merge(override) do |_key, base_v, over_v|
+        if base_v.is_a?(Hash) && over_v.is_a?(Hash)
+          deep_merge(base_v, over_v)
+        else
+          over_v
+        end
+      end
     end
 
     def parse_yaml(path)
