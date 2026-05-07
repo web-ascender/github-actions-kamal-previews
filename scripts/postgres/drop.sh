@@ -32,7 +32,15 @@ export PGDATABASE="$MAINTENANCE_DATABASE"
 
 psql_scalar() { psql -v ON_ERROR_STOP=1 -tAq "$@"; }
 
-if [ -z "$(psql_scalar -c "SELECT 1 FROM pg_database WHERE datname = '${TARGET_DATABASE}' LIMIT 1" || true)" ]; then
+# Distinguish "database does not exist" (a clean no-op) from "couldn't
+# even connect" (a real failure we should surface). Previously we used
+# `… || true` and treated any empty output as "doesn't exist", which
+# silently masked connection-limit / auth errors and let teardown report
+# success while leaving the per-PR DB orphaned.
+if ! exists_out="$(psql_scalar -c "SELECT 1 FROM pg_database WHERE datname = '${TARGET_DATABASE}' LIMIT 1" 2>&1)"; then
+  kp_die "Could not query maintenance DB '${MAINTENANCE_DATABASE}' on ${PGHOST}:${PGPORT}: ${exists_out}"
+fi
+if [ -z "$exists_out" ]; then
   kp_log "Database '${TARGET_DATABASE}' does not exist — nothing to drop."
   exit 0
 fi

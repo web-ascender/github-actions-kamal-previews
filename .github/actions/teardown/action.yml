@@ -43,7 +43,11 @@ runs:
         IGNORE_MISSING: ${{ inputs.ignore-missing-app }}
       run: |
         set -euo pipefail
-        if kamal app remove -d "$DEST" -y; then
+        # `kamal app remove` (the subcommand) takes no flags. The `-y`
+        # confirmation flag exists on top-level `kamal remove`, not here —
+        # passing it makes Thor exit with "kamal app remove was called
+        # with arguments [-y]" before any container is touched.
+        if kamal app remove -d "$DEST"; then
           echo "App '$DEST' removed."
         else
           rc=$?
