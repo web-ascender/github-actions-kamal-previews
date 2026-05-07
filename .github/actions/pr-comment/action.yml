@@ -67,14 +67,25 @@ runs:
           *)        emoji=":information_source:"    ; status="Status: \`$STATE\`" ;;
         esac
 
-        # Build body with printf-controlled newlines so the string is on a
-        # single YAML line (literal LFs in a YAML block scalar must respect
-        # the block's indent; printf %b lets us emit \n freely).
-        body="$(printf '%s\n%s %s\n\n| | |\n| --- | --- |\n' "$MARKER" "$emoji" "$status")"
-        [ -n "$URL" ]     && body+="$(printf '| URL | <%s> |\n' "$URL")"
-        [ -n "$DEST" ]    && body+="$(printf '| Kamal destination | `%s` |\n' "$DEST")"
-        [ -n "$DB_NAME" ] && body+="$(printf '| Database | `%s` |\n' "$DB_NAME")"
-        body+="$(printf '| Workflow run | [%s](%s/%s/actions/runs/%s) |\n\n<sub>Posted by [kamal-previews](https://github.com/web-ascender/github-actions-kamal-previews).</sub>' "$RUN_ID" "$SERVER_URL" "$GH_REPO" "$RUN_ID")"
+        # Build the body in a temp file so internal newlines survive. We
+        # can't use `body="$(printf …)"` followed by `body+="$(printf …)"`
+        # — `$(…)` strips trailing newlines, so each appended chunk would
+        # collide with the previous one and the markdown table/list would
+        # collapse onto a single line.
+        body_file="$(mktemp)"
+        {
+          printf '%s\n' "$MARKER"
+          printf '%s %s\n\n' "$emoji" "$status"
+          [ -n "$URL" ]     && printf -- '- **URL:** <%s>\n' "$URL"
+          [ -n "$DEST" ]    && printf -- '- **Kamal destination:** `%s`\n' "$DEST"
+          [ -n "$DB_NAME" ] && printf -- '- **Database:** `%s`\n' "$DB_NAME"
+          printf -- '- **Workflow run:** [%s](%s/%s/actions/runs/%s)\n' "$RUN_ID" "$SERVER_URL" "$GH_REPO" "$RUN_ID"
+          printf '\n<sub>Posted by [kamal-previews](https://github.com/web-ascender/github-actions-kamal-previews).</sub>\n'
+        } > "$body_file"
+        # `$(<file)` strips only the *final* trailing newline; interior
+        # newlines are preserved, which is what we need.
+        body="$(<"$body_file")"
+        rm -f "$body_file"
 
         # Find existing comment by marker
         existing_id="$(gh api -H 'Accept: application/vnd.github+json' \
