@@ -61,14 +61,19 @@ runs:
       run: |
         set -euo pipefail
         case "$INPUT_ENGINE" in postgres|mysql|sqlite) ;; *) echo "bad engine"; exit 1;; esac
-        [ -z "$INPUT_HOST" ] && { echo "host is required"; exit 1; }
+        if [ -z "$INPUT_HOST" ]; then echo "host is required"; exit 1; fi
+        # NOTE: use `if … fi` rather than `[ -z … ] && { … }`. The latter as
+        # the last statement in a case branch propagates a non-zero exit
+        # status when the test is false (because && short-circuits and the
+        # compound returns 1), which becomes the script's overall exit code.
         case "$INPUT_ENGINE" in
           postgres|mysql)
-            [ -z "$INPUT_DATABASES" ] && { echo "databases input is required for $INPUT_ENGINE"; exit 1; }
-            [ -z "$INPUT_ADMIN_URL" ] && { echo "admin-url is required for $INPUT_ENGINE"; exit 1; }
+            if [ -z "$INPUT_DATABASES" ]; then echo "databases input is required for $INPUT_ENGINE"; exit 1; fi
+            if [ -z "$INPUT_ADMIN_URL" ]; then echo "admin-url is required for $INPUT_ENGINE"; exit 1; fi
             ;;
           sqlite)
-            [ -z "$INPUT_SQLITE_TARGET_PATH" ] && { echo "sqlite-target-path is required"; exit 1; } ;;
+            if [ -z "$INPUT_SQLITE_TARGET_PATH" ]; then echo "sqlite-target-path is required"; exit 1; fi
+            ;;
         esac
 
     - id: drop
