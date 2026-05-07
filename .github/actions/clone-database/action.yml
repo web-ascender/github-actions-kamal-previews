@@ -27,7 +27,12 @@ inputs:
     required: false
     default: "22"
   docker-image:
-    description: Docker image used to run the postgres/mysql client tools on the host. Defaults to `postgres:16-alpine` for engine=postgres and `mysql:8.4` for engine=mysql. Ignored for sqlite.
+    description: |
+      Docker image used to run the postgres/mysql client tools on the host.
+      Defaults to `postgres:alpine` for engine=postgres (tracks the latest
+      major release — pg_dump must be at least as new as the server) and
+      `mysql:8.4` for engine=mysql. Pin to a specific tag if you need
+      reproducible runs. Ignored for sqlite.
     required: false
     default: ""
 
@@ -129,7 +134,7 @@ runs:
         docker_image="$INPUT_DOCKER_IMAGE"
         if [ -z "$docker_image" ]; then
           case "$INPUT_ENGINE" in
-            postgres) docker_image="postgres:16-alpine" ;;
+            postgres) docker_image="postgres:alpine" ;;
             mysql) docker_image="mysql:8.4" ;;
           esac
         fi

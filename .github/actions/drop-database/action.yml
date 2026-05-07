@@ -17,7 +17,7 @@ inputs:
     required: false
     default: "22"
   docker-image:
-    description: Docker image with the right client tools. Defaults to `postgres:16-alpine` (postgres) or `mysql:8.4` (mysql). Ignored for sqlite.
+    description: Docker image with the right client tools. Defaults to `postgres:alpine` (postgres) or `mysql:8.4` (mysql). Ignored for sqlite.
     required: false
     default: ""
 
@@ -100,7 +100,7 @@ runs:
         docker_image="$INPUT_DOCKER_IMAGE"
         if [ -z "$docker_image" ]; then
           case "$INPUT_ENGINE" in
-            postgres) docker_image="postgres:16-alpine" ;;
+            postgres) docker_image="postgres:alpine" ;;
             mysql) docker_image="mysql:8.4" ;;
           esac
         fi

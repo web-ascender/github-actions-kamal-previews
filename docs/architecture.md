@@ -105,7 +105,7 @@ The shell scripts under `scripts/` are the database adapters:
 | `scripts/lib/identifier-safe.sh`   | Shared helpers (identifier validation, logging) |
 
 The scripts are designed to run inside the corresponding official Docker
-image (`postgres:16-alpine`, `mysql:8.4`) so the deploy host doesn't need
+image (`postgres:alpine`, `mysql:8.4`) so the deploy host doesn't need
 client tooling installed. Identifier inputs are validated against
 `^[A-Za-z_][A-Za-z0-9_]{0,62}$` to prevent SQL injection.
 
@@ -134,7 +134,7 @@ deploy job
   ├─ clone-database
   │     │
   │     ├─ scp scripts → deploy host
-  │     └─ ssh deploy@host → docker run postgres:16-alpine bash /work/postgres/clone.sh
+  │     └─ ssh deploy@host → docker run postgres:alpine bash /work/postgres/clone.sh
   │           (pg_dump myapp_staging | psql myapp_checkout_rewrite)
   │
   ├─ deploy
@@ -176,7 +176,7 @@ and the "is my runner's IP whitelisted" question.
 
 The deploy host probably doesn't have `psql` / `mysqldump` installed — and
 shouldn't be expected to. By running the clone script inside the official
-DB image (`postgres:16-alpine`, `mysql:8.4`), we get the right tools at the
+DB image (`postgres:alpine`, `mysql:8.4`), we get the right tools at the
 right version with no host-side dependency.
 
 ### One Kamal `service:` per PR
