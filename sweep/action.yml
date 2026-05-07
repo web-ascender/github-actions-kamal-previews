@@ -19,8 +19,8 @@ description: |
           steps:
             - uses: actions/checkout@v4
             # Optional: VPN, if your deploy host is private.
-            - uses: <your-vpn-action>@v1
-              with: { private-key: ..., public-key: ..., endpoint: ..., interface-ip: ..., routes: ... }
+            # - uses: <your-vpn-action>@v1
+            #   with: { ... }
             - uses: web-ascender/github-actions-kamal-previews/sweep@v1
               with:
                 base-deploy-file:  config/deploy.staging.yml

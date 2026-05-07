@@ -2,7 +2,7 @@
 #
 # The smallest config that works end-to-end: a public deploy host, one
 # Postgres database, and your existing `.kamal/secrets.staging` file. For
-# anything beyond this — WireGuard, multi-DB, resource caps, branch
+# anything beyond this — VPN pairing, multi-DB, resource caps, branch
 # filters, image-tag pinning — see examples/postgres/preview.yml.
 #
 # Required GitHub Actions secrets (Settings → Secrets and variables → Actions):

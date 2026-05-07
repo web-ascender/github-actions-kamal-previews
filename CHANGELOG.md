@@ -7,7 +7,7 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- Initial extraction from `kamal-previews`.
+- Initial release.
 - Reusable GitHub workflow (`.github/workflows/preview.yml`) covering the full
   preview-environment lifecycle: deploy on PR open/sync, teardown on PR close
   and on branch delete.
@@ -26,13 +26,13 @@ follows [Semantic Versioning](https://semver.org/).
 - Minitest suite covering the namer, the config generator, and CLI argument
   parsing.
 
-### Changed compared to the kamal-previews seed
-- Switched from `push: feature/*` triggers to `pull_request` + `delete` —
-  better lifecycle, no need to enforce a branch-naming convention.
-- Switched from in-container database clone (entrypoint hook) to host-side
-  clone over SSH by default. In-container mode remains available for setups
-  where the runner can't reach the deploy host's network.
-- Per-PR Kamal config no longer hard-codes builder context to `.` — uses the
+### Design notes
+- `pull_request` + `delete` triggers (rather than `push: feature/*`) for
+  cleaner lifecycle handling and no enforced branch-naming convention.
+- Host-side database clone over SSH by default; in-container mode remains
+  available for setups where the runner can't reach the deploy host's
+  network.
+- Per-PR Kamal config does not hard-code builder context — uses the
   committed ref by default.
 - Configurable everything: domain suffix, database name pattern, env tag
   label, image tag, base deploy/secrets file paths.

@@ -1,17 +1,17 @@
 # Drop this file into your Rails app at .github/workflows/preview.yml.
 #
-# Composite-action form: a single job, single steps stack. The WireGuard
-# tunnel (if your deploy host is private) is a sibling step that runs
-# before kamal-previews — they're independent concerns and compose
-# naturally.
+# Composite-action form: a single job, single steps stack. A VPN tunnel
+# (if your deploy host is private) is a sibling step that runs before
+# kamal-previews — they're independent concerns and compose naturally.
 #
 # Repo-level GitHub Actions secrets the workflow expects:
 #   DEPLOY_SSH_KEY      — SSH key for the deploy host (Kamal's key).
 #   STAGING_MASTER_KEY  — Rails master key, only if your secrets file
 #                          shells out to `bin/rails credentials:fetch`.
 #   DATABASE_ADMIN_URL  — only if your staging app role lacks CREATEDB.
-#   VPN_PRIVATE_KEY/VPN_PUBLIC_KEY — WireGuard credentials (only if your
-#                          deploy host is on a private network).
+#   VPN credentials     — names depend on the VPN action you choose
+#                          (only if your deploy host is on a private
+#                          network).
 
 name: Preview environment
 
@@ -41,16 +41,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: open a WireGuard tunnel if your deploy host is private.
+      # Optional: open a VPN tunnel if your deploy host is private.
       # Remove this step if your deploy host is publicly addressable.
-      - name: Set up WireGuard VPN
-        uses: <your-vpn-action>@v1
-        with:
-          private-key:    ${{ secrets.VPN_PRIVATE_KEY }}
-          public-key:     ${{ secrets.VPN_PUBLIC_KEY }}
-          interface-ip:   "10.1.1.100/24"
-          endpoint:       "vpn.example.com:51820"
-          routes:         '["203.0.113.42"]'
+      # - name: Set up VPN
+      #   uses: <your-vpn-action>@v1
+      #   with: { ... }
 
       - name: Deploy / teardown preview
         uses: web-ascender/github-actions-kamal-previews@v1

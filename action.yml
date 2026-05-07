@@ -17,10 +17,10 @@ description: |
           steps:
             - uses: actions/checkout@v4
 
-            # Optional: open a WireGuard tunnel before this action runs,
+            # Optional: open a VPN tunnel before this action runs,
             # so SSH to a private deploy host works.
-            - uses: <your-vpn-action>@v1
-              with: { private-key: ..., public-key: ..., endpoint: ..., interface-ip: ..., routes: ... }
+            # - uses: <your-vpn-action>@v1
+            #   with: { ... }
 
             - uses: web-ascender/github-actions-kamal-previews@v1
               with:
@@ -44,10 +44,10 @@ description: |
     - delete (branch)                            → teardown
     - anything else                              → skip (with notice)
 
-  WireGuard / VPN setup is intentionally NOT in this action — pair it with
-  any VPN action you already trust (e.g. `<your-vpn-action>`)
-  as a sibling step. Tunnels established in earlier steps remain active for
-  the subsequent `kamal-previews` step in the same job.
+  VPN setup is intentionally NOT in this action — pair it with any VPN
+  action you already trust as a sibling step. Tunnels established in
+  earlier steps remain active for the subsequent `kamal-previews` step
+  in the same job.
 
   Two consumption forms; pick whichever fits:
 

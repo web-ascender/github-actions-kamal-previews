@@ -95,8 +95,7 @@ Bitwarden, Passbolt, or just a plaintext `.kamal/secrets.staging` file
 
 ## Application secrets via 1Password
 
-This is what the seed Rails app — the seed implementation —
-uses. Write your `.kamal/secrets.staging` like:
+A typical 1Password-backed `.kamal/secrets.staging`:
 
 ```bash
 # .kamal/secrets.staging

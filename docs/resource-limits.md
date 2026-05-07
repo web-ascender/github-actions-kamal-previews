@@ -19,8 +19,8 @@ Combine all three for a tight setup.
 
 Default: every PR opened against the repo gets a preview. That's the
 modern review-app norm (Heroku, Render, Vercel). But sometimes you want
-to limit to a naming convention — for example, the seed implementation
-in `kamal-previews` only triggered on `feature/*` branches.
+to limit to a naming convention — for example, only triggering previews
+on `feature/*` branches.
 
 ```yaml
 jobs:

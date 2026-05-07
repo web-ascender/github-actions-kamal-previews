@@ -26,9 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: WireGuard tunnel if your deploy host is private.
+      # Optional: VPN tunnel if your deploy host is private.
       # - uses: <your-vpn-action>@v1
-      #   with: { private-key: ..., public-key: ..., endpoint: ..., interface-ip: ..., routes: ... }
+      #   with: { ... }
 
       - uses: web-ascender/github-actions-kamal-previews@v1
         with:

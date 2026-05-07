@@ -121,9 +121,8 @@ env-overrides: |
 
 The default architecture clones the database from the GitHub runner via
 SSH to the deploy host, *before* running `kamal deploy`. An alternative
-pattern (which the seed implementation in kamal-previews uses) is
-to do the clone *inside the per-PR app's container at boot*, via the
-Dockerfile's entrypoint.
+pattern is to do the clone *inside the per-PR app's container at boot*,
+via the Dockerfile's entrypoint.
 
 Pros:
 - The runner doesn't need any DB-clone-related secrets.
@@ -147,9 +146,8 @@ To use this mode:
    fi
    ```
 
-3. Add a `db:clone` rake task to your app — see
-   [`kamal-previews:lib/tasks/db.rake`](https://github.com/...)
-   for a working PostgreSQL example.
+3. Add a `db:clone` rake task to your app that performs the actual
+   database copy (e.g. via `pg_dump | psql` for PostgreSQL).
 
 The `FEATURE_BRANCH=true`, `DATABASE_NAME`, `FEATURE_BRANCH_SLUG`, and
 `FEATURE_BRANCH_DB_SLUG` env vars are set automatically by the

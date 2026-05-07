@@ -73,16 +73,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: open a WireGuard tunnel if your deploy host is private.
-      # WireGuard and kamal-previews are independent concerns — compose
-      # them as sibling steps. Drop this step if your host is public.
-      - uses: <your-vpn-action>@v1
-        with:
-          private-key:  ${{ secrets.VPN_PRIVATE_KEY }}
-          public-key:   ${{ secrets.VPN_PUBLIC_KEY }}
-          interface-ip: "10.1.1.100/24"
-          endpoint:     "vpn.example.com:51820"
-          routes:       '["203.0.113.42"]'
+      # Optional: open a VPN tunnel if your deploy host is private.
+      # The VPN action and kamal-previews are independent concerns —
+      # compose them as sibling steps. Drop this step if your host is
+      # public.
+      # - uses: <your-vpn-action>@v1
+      #   with: { ... }
 
       - uses: web-ascender/github-actions-kamal-previews@v1
         with:
@@ -107,7 +103,7 @@ The repo-level GitHub Actions secrets the workflow expects:
 | --- | --- |
 | `DEPLOY_SSH_KEY`     | Always — the deploy host SSH key. |
 | `DATABASE_ADMIN_URL` | Only if the URL exposed by your `base-secrets-file` doesn't have CREATEDB. Format: `postgres://admin:secret@host:5432/postgres?sslmode=verify-full`. |
-| `VPN_PRIVATE_KEY`, `VPN_PUBLIC_KEY` | Only if pairing with the WireGuard step above. |
+| VPN credentials (if any) | Only if pairing with a VPN step above. Names depend on the VPN action you choose. |
 
 Add them under Settings → Secrets and variables → Actions. The first PR
 you open after merging the workflow file will provision a preview
@@ -122,7 +118,7 @@ Prefer the reusable workflow form
 (`uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1`)
 when you want job-level features like matrix-fanned parallel orphan
 cleanup or GitHub's job-level concurrency UI. It does NOT support
-WireGuard pairing — workflows can't host sibling steps the way actions
+VPN pairing — workflows can't host sibling steps the way actions
 can — so private-host setups must use the composite action form above.
 See [`examples/README.md`](examples/README.md) for the comparison.
 

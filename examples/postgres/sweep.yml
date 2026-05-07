@@ -27,14 +27,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: WireGuard tunnel if your deploy host is private.
-      - uses: <your-vpn-action>@v1
-        with:
-          private-key: ${{ secrets.VPN_PRIVATE_KEY }}
-          public-key:  ${{ secrets.VPN_PUBLIC_KEY }}
-          interface-ip: "10.1.1.100/24"
-          endpoint:    "vpn.example.com:51820"
-          routes:      '["203.0.113.42"]'
+      # Optional: VPN tunnel if your deploy host is private.
+      # - uses: <your-vpn-action>@v1
+      #   with: { ... }
 
       - uses: web-ascender/github-actions-kamal-previews/sweep@v1
         with:

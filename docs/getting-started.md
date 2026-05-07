@@ -146,15 +146,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: open a WireGuard tunnel before kamal-previews runs.
+      # Optional: open a VPN tunnel before kamal-previews runs.
       # Skip this step if your deploy host is publicly addressable.
-      - uses: <your-vpn-action>@v1
-        with:
-          private-key:  ${{ secrets.VPN_PRIVATE_KEY }}
-          public-key:   ${{ secrets.VPN_PUBLIC_KEY }}
-          interface-ip: "10.1.1.100/24"
-          endpoint:     "vpn.example.com:51820"
-          routes:       '["203.0.113.42"]'
+      # - uses: <your-vpn-action>@v1
+      #   with: { ... }
 
       - uses: web-ascender/github-actions-kamal-previews@v1
         with:
@@ -180,8 +175,8 @@ variables → Actions:
   out to `bin/rails credentials:fetch ...` for the URL
 - `DATABASE_ADMIN_URL` — only if your staging app role lacks `CREATEDB`
   privilege (then provide a separate admin URL with that privilege)
-- `VPN_PRIVATE_KEY`, `VPN_PUBLIC_KEY` — only if you're using the
-  WireGuard step
+- VPN credentials — only if you're using a VPN step (names depend
+  on the VPN action you choose)
 
 ## Step 6: Open a test PR
 
