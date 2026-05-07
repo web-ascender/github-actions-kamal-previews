@@ -1,0 +1,49 @@
+# Minimal preview-environment workflow.
+#
+# The smallest config that works end-to-end: a public deploy host, one
+# Postgres database, and your existing `.kamal/secrets.staging` file. For
+# anything beyond this — WireGuard, multi-DB, resource caps, branch
+# filters, image-tag pinning — see examples/postgres/preview.yml.
+#
+# Required GitHub Actions secrets (Settings → Secrets and variables → Actions):
+#   DEPLOY_SSH_KEY      — SSH key with access to the deploy host.
+#   RAILS_MASTER_KEY    — needed if .kamal/secrets.staging shells out to
+#                          `bin/rails credentials:fetch`.
+
+name: Preview environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  packages: write          # GHCR push during `kamal deploy`
+  pull-requests: write     # rolling status comment
+  deployments: write       # GitHub Deployments API
+
+# Cancel a superseded deploy when a new commit lands on the same PR,
+# but never cancel a teardown — letting a `closed` event get cancelled
+# would leave the preview app + databases orphaned on the host.
+concurrency:
+  group: kamal-previews-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: web-ascender/github-actions-kamal-previews@v1
+        with:
+          base-deploy-file:  config/deploy.staging.yml
+          base-secrets-file: .kamal/secrets.staging
+          domain-suffix:     preview.example.com
+          deploy-host:       staging.example.com
+          database-engine:   postgres
+          databases: |
+            DATABASE_URL=myapp_staging:myapp_{db_slug}
+        env:
+          SSH_PRIVATE_KEY:  ${{ secrets.DEPLOY_SSH_KEY }}
+          RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}

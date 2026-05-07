@@ -60,6 +60,9 @@ permissions:
   pull-requests: write     # PR comments
   deployments: write       # Deployments API
 
+# Cancel a superseded deploy when a new commit lands on the same PR,
+# but never cancel a teardown — letting a `closed` event get cancelled
+# would leave the preview app + databases orphaned on the host.
 concurrency:
   group: kamal-previews-${{ github.event.pull_request.number || github.event.ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}

@@ -7,7 +7,8 @@ adjust the `with:`, `env:`, and `secrets:` blocks for your environment.
 
 | File | Use when |
 | --- | --- |
-| [postgres/preview.yml](postgres/preview.yml)   | Your staging DB is PostgreSQL. |
+| [minimal/preview.yml](minimal/preview.yml)     | Public deploy host, single Postgres DB. The shortest config that works. |
+| [postgres/preview.yml](postgres/preview.yml)   | Your staging DB is PostgreSQL — full-featured (WireGuard, multi-DB, caps). |
 | [postgres/sweep.yml](postgres/sweep.yml)       | Optional daily orphan cleanup. |
 | [mysql/preview.yml](mysql/preview.yml)         | Your staging DB is MySQL. |
 | [sqlite/preview.yml](sqlite/preview.yml)       | Your staging DB is SQLite (file on the deploy host). |
