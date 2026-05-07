@@ -53,49 +53,74 @@ runs:
             --jq '.[0].id // empty'
         }
 
+        # All Deployments API calls are best-effort — registering a
+        # GitHub Deployment is a UX nicety (the "View deployment" button
+        # on the PR), not load-bearing. If GitHub rejects the request —
+        # most commonly because of repository rulesets that enforce
+        # status-check requirements regardless of `required_contexts: []`
+        # / `auto_merge: false` — we log a clear warning and let the
+        # rest of the pipeline (clone, deploy, PR comment) proceed.
+        # Hard-failing on this step would let a config quirk block real
+        # preview deploys.
+
+        create_deployment() {
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/$GH_REPO/deployments" \
+            -f ref="$ref" \
+            -f environment="$ENVIRONMENT" \
+            -F transient_environment=true \
+            -F auto_inactive=true \
+            -F auto_merge=false \
+            -F required_contexts:='[]' \
+            -f description="kamal-previews preview environment" \
+            --jq '.id' 2>&1
+        }
+
+        warn_api_skip() {
+          local out="$1"
+          echo "::warning::GitHub Deployments API rejected the request — skipping deployment registration. Preview deploy continues; only the 'View deployment' button on the PR is missing. Most common cause: repository rulesets requiring status checks. API response: $out"
+        }
+
+        deployment_id=""
         case "$STATE" in
           created)
-            deployment_id="$(gh api --method POST \
-              -H 'Accept: application/vnd.github+json' \
-              "/repos/$GH_REPO/deployments" \
-              -f ref="$ref" \
-              -f environment="$ENVIRONMENT" \
-              -F transient_environment=true \
-              -F auto_inactive=true \
-              -F auto_merge=false \
-              -F required_contexts:='[]' \
-              -f description="kamal-previews preview environment" \
-              --jq '.id')"
-            gh api --method POST -H 'Accept: application/vnd.github+json' \
-              "/repos/$GH_REPO/deployments/$deployment_id/statuses" \
-              -f state=in_progress \
-              -f description="Deploying…" >/dev/null
+            out="$(create_deployment || true)"
+            if [[ "$out" =~ ^[0-9]+$ ]]; then
+              deployment_id="$out"
+              gh api --method POST -H 'Accept: application/vnd.github+json' \
+                "/repos/$GH_REPO/deployments/$deployment_id/statuses" \
+                -f state=in_progress \
+                -f description="Deploying…" >/dev/null 2>&1 || true
+            else
+              warn_api_skip "$out"
+            fi
             ;;
           success|failure)
-            deployment_id="$(find_deployment)"
+            deployment_id="$(find_deployment 2>/dev/null || true)"
             if [ -z "$deployment_id" ]; then
-              # If creation never happened (e.g. fast-fail before creation step),
-              # fall back to making one now to avoid an orphaned PR view.
-              deployment_id="$(gh api --method POST \
-                -H 'Accept: application/vnd.github+json' \
-                "/repos/$GH_REPO/deployments" \
-                -f ref="$ref" \
-                -f environment="$ENVIRONMENT" \
-                -F transient_environment=true \
-                -F auto_inactive=true \
-                -F required_contexts:='[]' \
-                --jq '.id')"
+              # Creation may have been skipped (fail-soft above) or the
+              # deploy fast-failed before we got that far. Try once more.
+              out="$(create_deployment || true)"
+              if [[ "$out" =~ ^[0-9]+$ ]]; then
+                deployment_id="$out"
+              else
+                warn_api_skip "$out"
+              fi
             fi
-            extra=()
-            [ -n "$URL" ] && extra+=(-f environment_url="$URL" -f log_url="$URL")
-            gh api --method POST -H 'Accept: application/vnd.github+json' \
-              "/repos/$GH_REPO/deployments/$deployment_id/statuses" \
-              -f state="$STATE" \
-              -f description="Deployment $STATE" \
-              "${extra[@]}" >/dev/null
+            if [ -n "$deployment_id" ]; then
+              extra=()
+              [ -n "$URL" ] && extra+=(-f environment_url="$URL" -f log_url="$URL")
+              gh api --method POST -H 'Accept: application/vnd.github+json' \
+                "/repos/$GH_REPO/deployments/$deployment_id/statuses" \
+                -f state="$STATE" \
+                -f description="Deployment $STATE" \
+                "${extra[@]}" >/dev/null 2>&1 \
+                || echo "::warning::Could not post deployment status — continuing."
+            fi
             ;;
           removed)
-            deployment_id="$(find_deployment)"
+            deployment_id="$(find_deployment 2>/dev/null || true)"
             if [ -z "$deployment_id" ]; then
               echo "No deployment for environment $ENVIRONMENT — nothing to mark inactive."
               echo "deployment_id=" >> "$GITHUB_OUTPUT"
@@ -104,7 +129,8 @@ runs:
             gh api --method POST -H 'Accept: application/vnd.github+json' \
               "/repos/$GH_REPO/deployments/$deployment_id/statuses" \
               -f state=inactive \
-              -f description="Deployment torn down" >/dev/null
+              -f description="Deployment torn down" >/dev/null 2>&1 \
+              || echo "::warning::Could not mark deployment inactive — continuing."
             ;;
           *)
             echo "Unknown state: $STATE"; exit 1 ;;
