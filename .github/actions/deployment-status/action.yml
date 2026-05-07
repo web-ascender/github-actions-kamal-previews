@@ -62,6 +62,7 @@ runs:
               -f environment="$ENVIRONMENT" \
               -F transient_environment=true \
               -F auto_inactive=true \
+              -F auto_merge=false \
               -F required_contexts:='[]' \
               -f description="kamal-previews preview environment" \
               --jq '.id')"
