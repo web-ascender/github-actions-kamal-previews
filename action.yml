@@ -17,11 +17,6 @@ description: |
           steps:
             - uses: actions/checkout@v4
 
-            # Optional: open a VPN tunnel before this action runs,
-            # so SSH to a private deploy host works.
-            # - uses: <your-vpn-action>@v1
-            #   with: { ... }
-
             - uses: web-ascender/github-actions-kamal-previews@v1
               with:
                 base-deploy-file:    config/deploy.staging.yml
@@ -44,24 +39,18 @@ description: |
     - delete (branch)                            → teardown
     - anything else                              → skip (with notice)
 
-  VPN setup is intentionally NOT in this action — pair it with any VPN
-  action you already trust as a sibling step. Tunnels established in
-  earlier steps remain active for the subsequent `kamal-previews` step
-  in the same job.
-
   Two consumption forms; pick whichever fits:
 
   - **This composite action** — single-step, sibling-friendly. Use when
-    your job needs a sibling VPN tunnel, custom credential-fetch step,
-    or any other pre/post step around kamal-previews itself.
+    your job needs sibling steps around kamal-previews (e.g. opening a
+    VPN tunnel before SSH to a private deploy host, or a custom
+    credential-fetch step).
   - **Reusable workflow** at
     `web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1` —
     multi-job, with deploy and teardown as separate jobs. Use when you
     don't need sibling steps and want stricter concurrency control.
 
-  Both forms support `branch-pattern` and `max-active-previews`. Neither
-  ships with VPN inputs; add the VPN as a sibling step (composite) or a
-  pre-step in your wrapping workflow (reusable).
+  Both forms support `branch-pattern` and `max-active-previews`.
 
 inputs:
   base-deploy-file:           { required: true }

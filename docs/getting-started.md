@@ -146,11 +146,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: open a VPN tunnel before kamal-previews runs.
-      # Skip this step if your deploy host is publicly addressable.
-      # - uses: <your-vpn-action>@v1
-      #   with: { ... }
-
       - uses: web-ascender/github-actions-kamal-previews@v1
         with:
           base-deploy-file:    config/deploy.staging.yml
@@ -175,8 +170,6 @@ variables → Actions:
   out to `bin/rails credentials:fetch ...` for the URL
 - `DATABASE_ADMIN_URL` — only if your staging app role lacks `CREATEDB`
   privilege (then provide a separate admin URL with that privilege)
-- VPN credentials — only if you're using a VPN step (names depend
-  on the VPN action you choose)
 
 ## Step 6: Open a test PR
 
@@ -189,6 +182,28 @@ see:
 
 Open the URL in a browser — you should see your app, populated with the
 data from `myapp_staging` cloned moments ago.
+
+## Private deploy hosts
+
+If your deploy host isn't publicly reachable, open a VPN tunnel as a
+sibling step before the kamal-previews step. The two are independent
+concerns — pick whichever VPN action you already trust:
+
+```yaml
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: <your-vpn-action>@v1
+        with: { ... }
+
+      - uses: web-ascender/github-actions-kamal-previews@v1
+        with: { ... }
+```
+
+The tunnel established by the earlier step stays open for the rest of
+the job. Add whatever credential secrets the VPN action requires
+alongside `DEPLOY_SSH_KEY`. The reusable-workflow form doesn't support
+this pattern — for private hosts, stick with the composite action.
 
 ## Step 7 (recommended): Add the daily sweeper
 

@@ -73,13 +73,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: open a VPN tunnel if your deploy host is private.
-      # The VPN action and kamal-previews are independent concerns —
-      # compose them as sibling steps. Drop this step if your host is
-      # public.
-      # - uses: <your-vpn-action>@v1
-      #   with: { ... }
-
       - uses: web-ascender/github-actions-kamal-previews@v1
         with:
           base-deploy-file:    config/deploy.staging.yml
@@ -103,7 +96,6 @@ The repo-level GitHub Actions secrets the workflow expects:
 | --- | --- |
 | `DEPLOY_SSH_KEY`     | Always — the deploy host SSH key. |
 | `DATABASE_ADMIN_URL` | Only if the URL exposed by your `base-secrets-file` doesn't have CREATEDB. Format: `postgres://admin:secret@host:5432/postgres?sslmode=verify-full`. |
-| VPN credentials (if any) | Only if pairing with a VPN step above. Names depend on the VPN action you choose. |
 
 Add them under Settings → Secrets and variables → Actions. The first PR
 you open after merging the workflow file will provision a preview
@@ -117,10 +109,13 @@ walkthrough including DNS, TLS, secrets, and host setup.
 Prefer the reusable workflow form
 (`uses: web-ascender/github-actions-kamal-previews/.github/workflows/preview.yml@v1`)
 when you want job-level features like matrix-fanned parallel orphan
-cleanup or GitHub's job-level concurrency UI. It does NOT support
-VPN pairing — workflows can't host sibling steps the way actions
-can — so private-host setups must use the composite action form above.
-See [`examples/README.md`](examples/README.md) for the comparison.
+cleanup or GitHub's job-level concurrency UI. See
+[`examples/README.md`](examples/README.md) for the comparison.
+
+> Private deploy host? Stick with the composite action form above and
+> add your VPN action as a sibling step — the reusable workflow form
+> can't host sibling steps. See
+> [getting-started](docs/getting-started.md#private-deploy-hosts).
 
 ## Architecture at a glance
 
