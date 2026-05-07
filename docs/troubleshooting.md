@@ -41,25 +41,24 @@ you'll see this error.
 Run `bin/kamal-previews slugify --branch <name>` to preview the slug for
 a branch and confirm there's no overlap.
 
-## "FATAL: source database is being accessed by other users"
+## Postgres clone is slow on a multi-GB source
 
-PostgreSQL's `CREATE DATABASE … TEMPLATE` requires no active connections
-to the source database. The `clone.sh` script calls `pg_terminate_backend`
-to evict connections and waits up to `DISCONNECT_TIMEOUT` (default 15s)
-for them to actually drop, but a connection pool that auto-reconnects can
-defeat this.
+The default Postgres clone uses `pg_dump | psql`, which scales linearly
+with database size and network throughput. For a few-GB staging DB this
+can take a couple of minutes. Mitigations:
 
-Mitigations, in order of preference:
+1. **Trim staging.** Most preview environments don't need every row from
+   prod-mirrored data. A nightly job that prunes old rows out of staging
+   keeps clones fast.
 
-1. **Use a dedicated template database** that nothing else connects to,
-   refreshed from staging on a schedule. Point each `databases:` entry's
-   source at the template, not at staging.
+2. **Use a dedicated template database** that's smaller than staging,
+   refreshed on a schedule. Point each `databases:` entry's source at
+   the template.
 
-2. **Lower the connection-reaping aggressiveness** of your staging app.
-   Idle-in-transaction timeouts and connection lifetimes help.
-
-3. **Increase `DISCONNECT_TIMEOUT`** by patching the script (planned as a
-   first-class input in v0.2).
+3. **Bring your own clone script.** `scripts/postgres/clone.sh` is a
+   plain bash script — fork it to use `pg_basebackup`, custom-format
+   `pg_restore --jobs=N`, or `CREATE DATABASE … TEMPLATE` if your
+   environment can guarantee no active connections to the source.
 
 ## "kamal-proxy: failed to obtain TLS certificate"
 

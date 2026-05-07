@@ -196,9 +196,9 @@ Worth a moment of thought:
 
 - **Preview apps share the same database cluster as staging.** A preview
   with a broken migration could in theory damage shared resources (e.g.
-  drop a table from the public schema). The default `CREATE DATABASE
-  TEMPLATE` flow gives each preview its own isolated database, so this
-  is unlikely in practice — but if you let preview apps connect with
+  drop a table from the public schema). The default `pg_dump | psql`
+  flow gives each preview its own isolated database, so this is unlikely
+  in practice — but if you let preview apps connect with
   cluster-superuser credentials, you've granted them more authority than
   they need. Use a dedicated per-app role with permissions only on its
   own database.

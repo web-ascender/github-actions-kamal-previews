@@ -99,7 +99,7 @@ The shell scripts under `scripts/` are the database adapters:
 
 | Script | Engine |
 | --- | --- |
-| `scripts/postgres/{clone,drop}.sh` | PostgreSQL via `CREATE DATABASE … TEMPLATE` |
+| `scripts/postgres/{clone,drop}.sh` | PostgreSQL via `pg_dump \| psql` |
 | `scripts/mysql/{clone,drop}.sh`    | MySQL via `mysqldump | mysql` |
 | `scripts/sqlite/{clone,drop}.sh`   | SQLite via `cp` (with WAL checkpoint first) |
 | `scripts/lib/identifier-safe.sh`   | Shared helpers (identifier validation, logging) |
@@ -135,7 +135,7 @@ deploy job
   │     │
   │     ├─ scp scripts → deploy host
   │     └─ ssh deploy@host → docker run postgres:16-alpine bash /work/postgres/clone.sh
-  │           (CREATE DATABASE myapp_checkout_rewrite TEMPLATE myapp_staging)
+  │           (pg_dump myapp_staging | psql myapp_checkout_rewrite)
   │
   ├─ deploy
   │     │

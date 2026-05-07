@@ -6,31 +6,37 @@ clone alternative.
 
 ## PostgreSQL
 
-**Default mechanism:** `CREATE DATABASE <target> TEMPLATE <source>`.
+**Default mechanism:** `pg_dump --no-owner --no-acl <source> | psql <target>`.
 
-This is fast (typically <5s for a few-GB database, milliseconds on
-PostgreSQL 18+ with `file_copy_method = clone` on a reflink-capable
-filesystem) but has a constraint: **PostgreSQL must have no active
-connections to the source database** at the moment of clone. The script
-calls `pg_terminate_backend` to evict existing connections, then waits up
-to `DISCONNECT_TIMEOUT` seconds (default 15) for them to actually drop.
+This streams the source schema and data into a freshly-created target
+database. It works under any concurrent load on the source — no
+connection-eviction dance — and on every managed Postgres flavor we've
+tested (DigitalOcean, RDS, self-hosted). For typical staging databases
+(tens to hundreds of MB) the clone takes single-digit seconds; multi-GB
+databases scale linearly with size and network throughput.
 
-If your staging environment has long-running connections that auto-reconnect,
-you may need to:
-
-1. Increase `DISCONNECT_TIMEOUT` via the `pg-` knobs (planned input,
-   currently the script-level default).
-2. Use a dedicated "template" database that nothing else connects to, and
-   refresh it from staging on a schedule. Then point each `databases:` entry's source
-   at the template database, not at staging.
+We previously used `CREATE DATABASE … TEMPLATE`. It's faster, but it
+requires zero active connections to the source — a hard requirement to
+meet for Solid Queue / Solid Cache / Solid Cable databases whose workers
+reconnect immediately after termination, and one that managed services
+often don't grant enough privilege to enforce. `pg_dump | psql` trades a
+few seconds for reliability.
 
 **Permissions.** The role in your `DATABASE_ADMIN_URL` (or the
 `DATABASE_URL` resolved from `base-secrets-file`) needs:
 
-- `CREATEDB` to create new databases.
-- `CONNECT` privilege on the source database.
-- Login rights on the maintenance database (`postgres` by default; override
-  with the `MAINTENANCE_DATABASE` env var on the script).
+- `CREATEDB` on the cluster.
+- `CONNECT` + `SELECT` on the source database (enough for `pg_dump`).
+- Login rights on the maintenance database used for the existence checks
+  and CREATE call. Defaults to `postgres`; the action automatically
+  forwards the dbname parsed from your admin URL when one is present
+  (e.g. DigitalOcean's `defaultdb`), so you don't normally need to
+  configure this.
+
+`--no-owner --no-acl` are passed to `pg_dump`, so ownership and GRANT
+statements that reference roles missing on the source don't cause restore
+failures. The connecting role becomes the owner of every object in the
+preview database.
 
 **Cleanup.** `DROP DATABASE IF EXISTS <target> WITH (FORCE)` — `FORCE`
 terminates remaining connections automatically.
